@@ -1,0 +1,49 @@
+# CLONE_VOICES.txt - Manual de Identidad Sonora (Clonado Custom)
+
+Este documento detalla el procedimiento para dotar al servidor de las voces de la Galería Élite y los estándares de OpenAI. Por razones de propiedad intelectual y derechos de autor, no se suministran archivos de audio de terceros con este software.
+
+## 🛡️ Requisitos Técnicos del Sample (La "Materia Prima")
+
+Para que el modelo XTTSv2 realice una clonación de alta fidelidad, cada archivo de referencia debe cumplir con los siguientes parámetros de inteligencia acústica:
+
+1. **Duración:** Entre 6 y 12 segundos. Menos de 6 segundos reduce la profundidad tonal; más de 12 aumenta la latencia de carga inicial sin mejorar proporcionalmente la calidad.
+2. **Contenido:** Voz humana clara. Debe contener una frase completa con variaciones naturales de entonación.
+3. **Pureza:** CERO ruido de fondo. Sin música, efectos de sonido, explosiones o eco. La presencia de frecuencias ajenas contaminará la salida de voz.
+4. **Formato:** .wav (PCM 16-bit o 32-bit float).
+5. **Calidad:** Frecuencia de muestreo mínima de 22,050 Hz (se recomienda 44,100 Hz o superior). Mono o Estéreo (el motor lo normalizará internamente).
+
+## 🚀 Procedimiento de Instalación
+
+Para que los mapeos automáticos funcionen, los archivos deben depositarse en el directorio de activos definido en sus variables de entorno (por defecto: `/opt/ai/assets/voices/`).
+
+### 📂 Estructura de Directorios:
+
+```text
+/opt/ai/assets/voices/
+├── standard/        <-- Voces de compatibilidad OpenAI
+│   ├── alloy.wav
+│   ├── echo.wav
+│   ├── fable.wav
+│   ├── onyx.wav
+│   ├── nova.wav
+│   └── shimmer.wav
+└── elite/           <-- Galería Élite de Inteligencias Artificiales
+    ├── redacted-voice.wav    (Mapeado a "narrator")
+    ├── redacted-voice.wav    (Mapeado a "voice-b")
+    ├── redacted-voice.wav         (Mapeado a "voice-c")
+    ├── redacted-voice.wav
+    ├── redacted.wav
+    ├── redacted.wav
+    ├── redacted.wav
+    ├── redacted.wav
+    └── redacted.wav
+```
+
+## 🔍 Consejos para una Clonación Sofisticada
+
+* **Normalización:** Utilice herramientas como Audacity o FFmpeg para normalizar el volumen del sample a -3dB.
+* **Limpieza:** Aplique un filtro de reducción de ruido si el clip original proviene de una fuente analógica o de una película antigua (como a character).
+* **Fidelidad:** La calidad del clon es directamente proporcional a la calidad del sample. Si la "Materia Prima" es pobre, la respuesta del servidor carecerá de alma.
+
+"La perfección no es un detalle, pero los detalles hacen la perfección."
+-- Uttera
