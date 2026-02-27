@@ -4,13 +4,14 @@
 # Coqui TTS Server (Hybrid Model)
 #
 # Package: coqui-tts-server
-# Version: 1.3.6
+# Version: 1.3.8
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with GPU acceleration, concurrency, and OpenAI API compliance.
 #
 # CHANGELOG:
-# - 1.3.6 (2026-02-27): Reverted to direct Uvicorn execution. Standardized voice provisioning documentation.
-# - 1.3.5 (2026-02-27): Default bind set to 127.0.0.1.
+# - 1.3.8 (2026-02-27): Consolidated security/network docs. Standard voices included in automated setup.
+# - 1.3.7 (2026-02-27): Reverted to direct Uvicorn execution. Localhost by default.
+# - 1.3.6 (2026-02-27): Fixed vocal provisioning documentation (Standard vs Elite).
 
 import os
 import uuid
@@ -59,14 +60,8 @@ VOICE_MAP = {
     "nova": "standard/nova.wav",
     "shimmer": "standard/shimmer.wav",
     "narrator": "elite/redacted-voice.wav",
-    "voice-b": "elite/redacted-voice.wav",
-    "voice-c": "elite/redacted-voice.wav",
-    "voice-a": "elite/redacted-voice.wav",
-    "voice-d": "elite/redacted.wav",
-    "voice-e": "elite/redacted.wav",
-    "voice-f": "elite/redacted.wav",
-    "voice-g": "elite/redacted.wav",
-    "voice-h": "elite/redacted.wav"
+    "voice-b": "elite/voice-b.wav",
+    "voice-c": "elite/redacted-voice.wav"
 }
 
 # -------------------------------
@@ -85,7 +80,8 @@ def load_hot_worker():
         worker.to("cuda")
         
         if "xtts" in model_name.lower():
-            warmup_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["narrator"])
+            # Standard warm-up with alloy
+            warmup_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
             if os.path.exists(warmup_wav):
                 worker.tts("System online.", speaker_wav=warmup_wav, language="en")
         
@@ -105,11 +101,10 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.3.6")
+app = FastAPI(title="Coqui TTS Server", version="1.3.8")
 
 @app.on_event("startup")
 async def startup_event():
-    # Load model on FastAPI startup to remain Uvicorn-compliant
     load_hot_worker()
 
 # -------------------------------
@@ -127,8 +122,8 @@ def convert_audio(input_path: str, output_path: str, fmt: str):
     subprocess.run(cmd, capture_output=True, check=True)
 
 def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
-    model_name = os.environ.get("TTS_MODEL", DEFAULT_MODEL)
     kwargs = {"text": text, "file_path": output_path, "speed": speed}
+    model_name = os.environ.get("TTS_MODEL", DEFAULT_MODEL)
     if "xtts" in model_name.lower() or "your_tts" in model_name.lower():
         kwargs["speaker_wav"] = speaker_wav
         kwargs["language"] = lang
@@ -168,7 +163,9 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         v_file = VOICE_MAP.get(req.voice.lower(), VOICE_MAP["alloy"])
         speaker_wav = os.path.join(VOICE_ASSET_DIR, v_file)
         voice_id = req.voice.lower()
-        if not os.path.exists(speaker_wav): speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
+        if not os.path.exists(speaker_wav): 
+            if DEBUG: print(f"[!] Voice not found: {speaker_wav}. Defaulting to alloy.")
+            speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
 
     lang = req.language if req.language else "en"
     model_name = os.environ.get("TTS_MODEL", DEFAULT_MODEL)
