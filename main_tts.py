@@ -147,10 +147,11 @@ class SpeechRequest(BaseModel):
     model: str = "tts-1"
     input: str
     voice: str = "alloy"
+    language: Optional[str] = "es"
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.2.3")
+app = FastAPI(title="Coqui TTS Server", version="1.2.4")
 
 # -------------------------------
 # 4. Core Logic: The Two Lanes
@@ -250,11 +251,11 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             if DEBUG: print(f"[!] Voice file not found: {speaker_wav}. Falling back to alloy.")
             speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
 
-    # Language Detection (Default to 'es')
-    lang = "es"
+    # Language Detection (Dynamic)
+    lang = req.language if req.language else "es"
 
     # Cache Check
-    cache_key = hashlib.md5(f"{req.input}{voice_id}{req.speed}{req.response_format}".encode()).hexdigest()
+    cache_key = hashlib.md5(f"{req.input}{voice_id}{req.speed}{req.response_format}{lang}".encode()).hexdigest()
     final_output_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.{req.response_format}")
     
     if os.path.exists(final_output_path):
