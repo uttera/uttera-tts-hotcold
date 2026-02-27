@@ -16,7 +16,7 @@ High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architectu
 
 ## 📦 Requirements
 
-- **Coqui TTS:** Requires the `TTS` library (optimized for XTTSv2).
+- **Coqui TTS:** This server is built upon the official [Coqui TTS Engine](https://github.com/coqui-ai/TTS).
 - **FFmpeg:** Required for real-time audio conversion.
 - **NVIDIA GPU:** Mandatory for hardware acceleration (CUDA).
 - **Python 3.10+**
@@ -25,12 +25,14 @@ High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architectu
 
 It is highly recommended to install the dependencies within a virtual environment.
 
+**Note:** You must first install the core Coqui TTS library following the instructions in its [official repository](https://github.com/coqui-ai/TTS).
+
 ```bash
 # 1. Create a virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
-# 2. Install core requirements
+# 2. Install core requirements and web server components
 pip install TTS fastapi uvicorn
 ```
 
