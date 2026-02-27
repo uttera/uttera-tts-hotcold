@@ -1,5 +1,7 @@
 coqui-tts
 torch
+torchaudio
 fastapi
 uvicorn
 pydantic
+python-multipart
