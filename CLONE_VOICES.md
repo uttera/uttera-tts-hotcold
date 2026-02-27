@@ -39,34 +39,40 @@ For automatic mappings to work, files must be placed in the assets directory def
     └── redacted.wav
 ```
 
-## 🛠️ Advanced Workflow: Extracting Samples with FFmpeg
+## 🛠️ Advanced Workflow: From Source to Sample
 
-To obtain a professional-grade sample from a source file (such as a movie or interview), you can use the following optimized FFmpeg workflow. This process isolates the voice, removes extreme frequencies, and normalizes the volume.
+To obtain a professional-grade sample from any online source (such as YouTube) or a local file, you can follow this end-to-end workflow. This process involves downloading, precise extraction, and acoustic optimization.
 
-### 1. Identify the Target Segment
-Find a segment where the character speaks clearly without music or background noise. Note the start time (`-ss`) and duration (`-t`).
-
-### 2. High-Fidelity Extraction Command
-Run the following command to extract and pre-process the audio:
+### 1. Download & Initial Extraction (YouTube)
+If your source is on YouTube, use `yt-dlp` to extract the highest quality audio directly:
 
 ```bash
-ffmpeg -i input_movie.mkv \
-  -ss 01:22:15 -t 10 \
-  -vn -acodec pcm_s16le -ar 44100 -ac 1 \
+yt-dlp -x --audio-format wav --audio-quality 0 "https://www.youtube.com/watch?v=VIDEO_ID" -o "raw_source.wav"
+```
+
+### 2. Identify the Target Segment
+Find a segment (6-12s) where the character speaks clearly without music or background noise. Note the start time (`-ss`) and duration (`-t`).
+
+### 3. Professional Mastering with FFmpeg
+Run the following optimized command to isolate and master the voice:
+
+```bash
+ffmpeg -i raw_source.wav \
+  -ss 00:01:25 -t 10 \
+  -acodec pcm_s16le -ar 44100 -ac 1 \
   -af "highpass=f=200, lowpass=f=3000, loudnorm=I=-16:TP=-1.5:LRA=11" \
   /opt/ai/assets/voices/elite/target_voice.wav
 ```
 
 ### ⚙️ Command Breakdown:
-* `-ss 01:22:15`: Starts extraction at 1 hour, 22 minutes, and 15 seconds.
+* `-ss 00:01:25`: Starts extraction at 1 minute and 25 seconds.
 * `-t 10`: Extracts exactly 10 seconds.
-* `-vn`: Discards video stream.
 * `-acodec pcm_s16le`: Encodes in 16-bit PCM (WAV standard).
 * `-ar 44100 -ac 1`: Sets 44.1kHz sample rate and forces Mono (cleaner for cloning).
 * `-af "..."`: Audio filters chain:
-    * `highpass=f=200`: Removes low-end rumble and hum.
-    * `lowpass=f=3000`: Removes high-frequency hiss (adjust to 4000-5000 for modern voices).
-    * `loudnorm`: Normalizes the voice to EBU R128 standards for consistent volume.
+    * `highpass=f=200`: Removes low-end rumble and power line hum.
+    * `lowpass=f=3000`: Removes high-frequency hiss (expand to 5000 for modern high-bitrate sources).
+    * `loudnorm`: Normalizes the voice to EBU R128 standards for a punchy, consistent presence.
 
 ## 🔍 Tips for Sophisticated Cloning
 
