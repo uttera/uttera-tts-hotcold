@@ -1,11 +1,12 @@
 #!/bin/bash
-# Uttera TTS Provisioning Script
-# Version: 1.0.0
-# Description: Automates the setup of system dependencies, Coqui models, and reference voices.
+# Uttera TTS Asset Provisioning Script
+# Version: 1.1.0
+# Description: Automates the setup of system dependencies and Coqui models.
+# Note: Reference voices must be provided manually by the user in /opt/ai/assets/voices/
 
 set -e
 
-echo "🦾 Uttera - Initializing TTS Infrastructure Provisioning..."
+echo "🦾 Uttera - Provisioning Infrastructure Assets..."
 
 # 1. System Dependencies
 echo "[*] Installing system dependencies (espeak-ng)..."
@@ -21,41 +22,18 @@ sudo chown -R $USER:$USER /opt/ai/assets/voices/
 
 # 3. Environment Variables
 export TTS_HOME="/opt/ai/models/speech/coqui-tts"
-VOICE_BASE_URL="https://github.com/fakehec/coqui-tts-local-server/raw/master/samples"
 
-# 4. Standard Voices (OpenAI Compatibility)
-echo "[*] Provisioning Standard Voice Gallery (OpenAI Mappings)..."
-voices=("alloy" "echo" "fable" "onyx" "nova" "shimmer")
-for voice in "${voices[@]}"; do
-    echo "    -> Downloading $voice.wav..."
-    curl -L -s -o "/opt/ai/assets/voices/standard/$voice.wav" "$VOICE_BASE_URL/standard/$voice.wav"
-done
-
-# 5. Elite Voices (Uttera Specialities)
-echo "[*] Provisioning Elite Voice Gallery..."
-elite_voices=("redacted-voice" "redacted-voice") # redacted-voice is mapped to 'assistant'
-for voice in "${elite_voices[@]}"; do
-    echo "    -> Downloading $voice.wav..."
-    curl -L -s -o "/opt/ai/assets/voices/elite/$voice.wav" "$VOICE_BASE_URL/elite/$voice.wav"
-done
-
-# 6. Model Provisioning (Initialization)
-# We use a temp reference file to initialize multi-speaker models
-REF_VOICE="/opt/ai/assets/voices/standard/alloy.wav"
-
+# 4. Model Provisioning (Initialization)
+# Use a system-wide dummy wav if no reference is present, or skip XTTS init
 echo "[*] Provisioning Coqui Models (this may take several minutes)..."
 
-echo "    -> [1/3] XTTS v2 (Orchestrator)..."
-tts --model_name tts_models/multilingual/multi-dataset/xtts_v2 \
-    --text "System Online" --language_idx "en" \
-    --speaker_wav "$REF_VOICE" --out_path "/tmp/init_xtts.wav" > /dev/null 2>&1
-
-echo "    -> [2/3] VITS LJSpeech (English Fast)..."
+echo "    -> [1/2] VITS LJSpeech (English Fast)..."
 tts --model_name tts_models/en/ljspeech/vits \
-    --text "System Online" --out_path "/tmp/init_vits_en.wav" > /dev/null 2>&1
+    --text "init" --out_path "/tmp/init_vits_en.wav" > /dev/null 2>&1
 
-echo "    -> [3/3] VITS CSS10 (Spanish Natve)..."
+echo "    -> [2/2] VITS CSS10 (Spanish Native)..."
 tts --model_name tts_models/es/css10/vits \
-    --text "Sistema Iniciado" --out_path "/tmp/init_vits_es.wav" > /dev/null 2>&1
+    --text "init" --out_path "/tmp/init_vits_es.wav" > /dev/null 2>&1
 
-echo "✅ Provisioning Complete. Your Uttera TTS node is ready."
+echo "⚠️  XTTS v2 model requires manual initialization with a reference .wav file."
+echo "✅ Infrastructure Provisioning Complete."
