@@ -4,17 +4,18 @@
 # Coqui TTS Server (Hybrid Model)
 #
 # Package: coqui-tts-server
-# Version: 1.2.5
+# Version: 1.2.7
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with GPU acceleration, concurrency, and OpenAI API compliance.
 #
 # CHANGELOG:
+# - 1.2.7 (2026-02-27): Added --model CLI argument for pre-loading custom architectures.
 # - 1.2.6 (2026-02-27): Dynamic language param, English default, and README architecture documentation.
 # - 1.2.5 (2026-02-27): Default language set to 'en'. Full multilingual support.
-# - 1.2.4 (2026-02-27): Added dynamic language parameter and cache integration.
-# - 1.2.3 (2026-02-27): Added OpenAI JSON support, Stark Elite voice gallery, and multi-format conversion.
 
 import os
+import sys
+import argparse
 import time
 import uuid
 import shutil
@@ -41,7 +42,7 @@ import torch
 # -------------------------------
 VENV_PYTHON = "/usr/local/lib/coqui/bin/python"
 TTS_SCRIPT = "/usr/local/lib/coqui/bin/tts"
-MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+DEFAULT_MODEL = "tts_models/multilingual/multi-dataset/xtts_v2"
 
 # Storage Paths
 AUDIO_CACHE_DIR = os.environ.get("AUDIO_CACHE_DIR", "/opt/ai/cache/coqui-tts-audio")
@@ -77,20 +78,27 @@ VOICE_MAP = {
 # -------------------------------
 model_lock = threading.Lock()
 tts_hot_worker = None
+active_model_name = DEFAULT_MODEL
 
-def load_hot_worker():
-    global tts_hot_worker
-    if DEBUG: print(f"[*] Loading HOT WORKER model: {MODEL_NAME}")
+def load_hot_worker(model_name: str):
+    global tts_hot_worker, active_model_name
+    active_model_name = model_name
+    if DEBUG: print(f"[*] Loading HOT WORKER model: {active_model_name}")
     try:
         torch.backends.cudnn.benchmark = True
-        worker = TTS(model_name=MODEL_NAME, progress_bar=False)
+        worker = TTS(model_name=active_model_name, progress_bar=False)
         worker.to("cuda")
-        warmup_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["narrator"])
-        if os.path.exists(warmup_wav):
-            worker.tts("System online.", speaker_wav=warmup_wav, language="en")
+        
+        # Warm up if XTTS
+        if "xtts" in active_model_name.lower():
+            warmup_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["narrator"])
+            if os.path.exists(warmup_wav):
+                worker.tts("System online.", speaker_wav=warmup_wav, language="en")
+        
         tts_hot_worker = worker
+        if DEBUG: print(f"[+] Hot worker loaded and ready on GPU: {active_model_name}")
     except Exception as e:
-        print(f"[!] ERROR: {e}")
+        print(f"[!] ERROR loading model {active_model_name}: {e}")
 
 # -------------------------------
 # 3. OpenAI Schema Models
@@ -103,7 +111,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.2.5")
+app = FastAPI(title="Coqui TTS Server", version="1.2.7")
 
 # -------------------------------
 # 4. Core Logic
@@ -120,12 +128,22 @@ def convert_audio(input_path: str, output_path: str, fmt: str):
     subprocess.run(cmd, capture_output=True, check=True)
 
 def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
-    tts_hot_worker.tts_to_file(text=text, speaker_wav=speaker_wav, language=lang, file_path=output_path, speed=speed)
+    # Determine synthesis args based on model type
+    kwargs = {"text": text, "file_path": output_path, "speed": speed}
+    if "xtts" in active_model_name.lower() or "your_tts" in active_model_name.lower():
+        kwargs["speaker_wav"] = speaker_wav
+        kwargs["language"] = lang
+    
+    tts_hot_worker.tts_to_file(**kwargs)
 
 def run_tts_cold_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
     sub_env = os.environ.copy()
     sub_env["COQUI_TOS_AGREED"] = "1"
-    cmd = [VENV_PYTHON, TTS_SCRIPT, "--text", text, "--model_name", MODEL_NAME, "--speaker_wav", speaker_wav, "--language_idx", lang, "--out_path", output_path, "--progress_bar", "False", "--use_cuda", "yes"]
+    cmd = [VENV_PYTHON, TTS_SCRIPT, "--text", text, "--model_name", active_model_name, "--out_path", output_path, "--progress_bar", "False", "--use_cuda", "yes"]
+    
+    if "xtts" in active_model_name.lower() or "your_tts" in active_model_name.lower():
+        cmd.extend(["--speaker_wav", speaker_wav, "--language_idx", lang])
+        
     subprocess.run(cmd, capture_output=True, text=True, env=sub_env)
 
 @app.post("/v1/audio/speech")
@@ -156,7 +174,7 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         if not os.path.exists(speaker_wav): speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
 
     lang = req.language if req.language else "en"
-    cache_key = hashlib.md5(f"{req.input}{voice_id}{req.speed}{req.response_format}{lang}".encode()).hexdigest()
+    cache_key = hashlib.md5(f"{req.input}{voice_id}{req.speed}{req.response_format}{lang}{active_model_name}".encode()).hexdigest()
     final_output_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.{req.response_format}")
     
     if os.path.exists(final_output_path): return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
@@ -176,6 +194,11 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
     return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
 
 if __name__ == "__main__":
-    load_hot_worker()
+    parser = argparse.ArgumentParser(description="Coqui TTS Local Server")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Model name to pre-load (Hot Worker)")
+    args = parser.parse_args()
+    
+    load_hot_worker(args.model)
+    
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5100)

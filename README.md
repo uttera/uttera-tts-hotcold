@@ -20,39 +20,79 @@ High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architectu
 - **FFmpeg:** Required for real-time audio conversion.
 - **NVIDIA GPU:** Mandatory for hardware acceleration (CUDA).
 - **Python 3.10+**
+- **espeak-ng:** Mandatory for phonemization in many models.
 
 ## ⚙️ Setup & Dependencies
 
 It is highly recommended to install the dependencies within a virtual environment.
 
 ```bash
-# 1. Create a virtual environment
+# 1. Install system dependency
+sudo apt-get update && sudo apt-get install -y espeak-ng
+
+# 2. Create a virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
-# 2. Install dependencies
+# 3. Install dependencies
 pip install -r requirements.txt
 ```
 
 ### 📦 Prerequisites & Model Setup
 
-Before running the server, you must ensure the XTTS v2 model (or your preferred model) is downloaded to the correct path. By default, the server expects models at `/opt/ai/models/speech/coqui-tts`.
-
-Run the following commands to prepare the environment:
+Before running the server, you must ensure the models are downloaded to the correct path. By default, the server expects models at `/opt/ai/models/speech/coqui-tts`.
 
 ```bash
 # 1. Create the model directory
 sudo mkdir -p /opt/ai/models/speech/coqui-tts
 sudo chown -R $USER:$USER /opt/ai/models/speech/
 
-# 2. Download the default XTTS v2 model
+# 2. Configure path
 export TTS_HOME="/opt/ai/models/speech/coqui-tts"
-tts --model_name tts_models/multilingual/multi-dataset/xtts_v2
 ```
 
-## 🛠 Installation
+### 📥 Verified Download Commands
 
-### 1. Manual Execution (Console)
+Run these exact commands to provision your local model gallery.
+
+#### 1. XTTS v2 (Uttera Orchestrator)
+*Requires a reference voice file to initialize.*
+```bash
+tts --model_name tts_models/multilingual/multi-dataset/xtts_v2 \
+    --text "init" --language_idx "en" \
+    --speaker_wav "/opt/ai/assets/voices/standard/alloy.wav" \
+    --out_path "/tmp/init.wav"
+```
+
+#### 2. VITS - LJSpeech (Ultra-fast English)
+```bash
+tts --model_name tts_models/en/ljspeech/vits \
+    --text "init" --out_path "/tmp/init.wav"
+```
+
+#### 3. VITS - VCTK (100+ English Voices)
+*Requires a speaker ID to initialize.*
+```bash
+tts --model_name tts_models/en/vctk/vits \
+    --text "init" --speaker_idx "p225" --out_path "/tmp/init.wav"
+```
+
+#### 4. VITS - CSS10 (High-speed Native Spanish)
+```bash
+tts --model_name tts_models/es/css10/vits \
+    --text "init" --out_path "/tmp/init.wav"
+```
+
+#### 5. YourTTS (Legacy Multilingual)
+```bash
+tts --model_name tts_models/multilingual/multi-dataset/your_tts \
+    --text "init" --language_idx "en" \
+    --speaker_wav "/opt/ai/assets/voices/standard/alloy.wav" \
+    --out_path "/tmp/init.wav"
+```
+
+## 🛠 Installation & Execution
+
 ```bash
 # Execute using Uvicorn
 uvicorn main_tts:app --host 0.0.0.0 --port 5100
@@ -60,28 +100,11 @@ uvicorn main_tts:app --host 0.0.0.0 --port 5100
 
 ### 🚀 Model Architecture & Performance
 
-To ensure sub-second latency, this server uses a **Hot Worker** model. The primary TTS model is pre-loaded into VRAM during startup, allowing for immediate synthesis without the overhead of model initialization.
+To ensure sub-second latency, this server uses a **Hot Worker** model. The primary TTS model is pre-loaded into VRAM during startup.
 
-*   **Default Behavior**: If no model is specified at startup, the server defaults to `tts_models/multilingual/multi-dataset/xtts_v2`.
-*   **Startup Override**: You can specify a different model to be pre-loaded by using the `--model` flag:
-    ```bash
-    python main_tts.py --model <model_name>
-    ```
-*   **API Compliance Note**: While the API is OpenAI-compliant, the `model` parameter in the `POST /v1/audio/speech` request is **currently ignored** to maintain the speed benefits of the pre-loaded Hot Worker.
-
-### 📦 Recommended Models Gallery
-
-You can download and use other specialized models. Here are the most recommended architectures:
-
-| Model Name | Primary Use Case | Download Command |
-| :--- | :--- | :--- |
-| **XTTS v2** | Professional Cloning (16 languages) | `tts --model_name tts_models/multilingual/multi-dataset/xtts_v2` |
-| **VITS (LJSpeech)** | Ultra-fast English (Female) | `tts --model_name tts_models/en/ljspeech/vits` |
-| **VITS (VCTK)** | 100+ Pre-set English Voices | `tts --model_name tts_models/en/vctk/vits` |
-| **VITS (CSS10)** | High-speed Native Spanish | `tts --model_name tts_models/es/css10/vits` |
-| **YourTTS** | Legacy Multilingual Cloning | `tts --model_name tts_models/multilingual/multi-dataset/your_tts` |
-
-> **Note**: Always set `export TTS_HOME="/opt/ai/models/speech/coqui-tts"` before downloading to ensure models are stored in the Uttera's standard path.
+*   **Default Behavior**: Defaults to `tts_models/multilingual/multi-dataset/xtts_v2`.
+*   **Startup Override**: Use the `--model` flag: `python main_tts.py --model <model_name>`.
+*   **API Compliance Note**: The `model` parameter in API requests is currently ignored for performance reasons.
 
 ### 2. System Service (systemd)
 1. Create: `/etc/systemd/system/coqui-tts.service`
@@ -110,7 +133,7 @@ WantedBy=multi-user.target
 
 ## 🔍 Debugging & Monitoring
 
-Set `DEBUG=true` to enable worker routing traces and command visibility:
+Set `DEBUG=true` to enable worker routing traces:
 
 ```bash
 DEBUG=true uvicorn main_tts:app --host 0.0.0.0 --port 5100
@@ -126,4 +149,4 @@ DEBUG=true uvicorn main_tts:app --host 0.0.0.0 --port 5100
 ## 🛡 License
 
 GNU GPL v3. 
-Maintainers: Hugo L. Espuny & Uttera, Hugo L. Espuny
+Maintainers: Hugo L. Espuny & Uttera
