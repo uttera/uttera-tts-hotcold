@@ -15,17 +15,14 @@ This server uses **Coqui TTS**, which is released under various licenses dependi
 ## 🚀 Key Features
 
 - **Hybrid Concurrency:** 
-  - **Hot Worker:** Keeps the primary model resident in VRAM for sub-second (XTTSv2 ~1.0s) inference.
-  - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy, ensuring true parallel synthesis without GIL blocking.
+  - **Hot Worker:** Primary model resident in VRAM for sub-second (XTTSv2 ~1.0s) inference.
+  - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy.
 - **OpenAI Compatible:** Native support for OpenAI parameters (`model`, `voice`, `speed`, `response_format`).
-- **Multilingual Excellence:** Native support for 16+ languages with dynamic language switching via the `language` parameter.
+- **Multilingual Excellence:** Native support for 16+ languages (English by default).
 - **Stark Elite Gallery:** Pre-mapped identities for assistant, voice-b, a character, and more.
-- **Multi-Format Output:** Real-time conversion to `mp3`, `opus`, `flac`, or `wav` via FFmpeg.
-- **Intelligent Caching:** MD5-based caching of audio results to ensure zero-latency for repeated requests.
+- **Intelligent Caching:** MD5-based caching for zero-latency repeated requests.
 
 ## 📦 Installation & Setup
-
-We use a modular setup process. The primary `setup.sh` orchestrates the environment, while `setup_assets.sh` handles infrastructure.
 
 ### 1. Unified Installation
 ```bash
@@ -36,41 +33,28 @@ chmod +x setup.sh
 ```
 
 ### 2. Manual Vocal Provisioning (Mandatory)
-Due to copyright and licensing, reference voice files (.wav) are **not provided**. You must provide your own samples:
-- **Standard Voices**: Place samples in `/opt/ai/assets/voices/standard/` (e.g., `alloy.wav`, `echo.wav`).
-- **Elite Voices**: Place samples in `/opt/ai/assets/voices/elite/` (e.g., `redacted-voice.wav`, `redacted-voice.wav`).
-
-Refer to [CLONE_VOICES.md](./CLONE_VOICES.md) for instructions on creating high-quality reference files.
+Due to copyright and licensing, reference voice files (.wav) are **not provided**. You must provide your own samples in `/opt/ai/assets/voices/`. Refer to [CLONE_VOICES.md](./CLONE_VOICES.md).
 
 ## 🛠 Execution
+
+The server is unified under the `main_tts.py` entry point.
 
 ### Manual Execution (Console)
 ```bash
 source venv/bin/activate
-# Startup with default XTTSv2
-uvicorn main_tts:app --host 0.0.0.0 --port 5100
 
-# Startup with a specific pre-loaded model
-python main_tts.py --model tts_models/en/ljspeech/vits
+# Localhost only (Default: 127.0.0.1:5100)
+python main_tts.py
+
+# Expose to Network (0.0.0.0)
+# WARNING: The server has NO AUTHENTICATION. Exposing it to the network is a security risk.
+python main_tts.py --host 0.0.0.0 --port 5100 --model tts_models/multilingual/multi-dataset/xtts_v2
 ```
 
-### 🚀 Model Architecture & Performance
-
-To ensure sub-second latency, this server uses a **Hot Worker** model. The primary TTS model is pre-loaded into VRAM during startup.
-
-*   **Default Behavior**: Defaults to `tts_models/multilingual/multi-dataset/xtts_v2`.
-*   **Startup Override**: Use the `--model` flag to pre-load a different architecture.
-*   **API Compliance Note**: The `model` parameter in API requests is currently ignored for performance reasons (always uses the pre-loaded Hot Worker).
-
-### 📦 Recommended Models Gallery
-
-| Model Name | Primary Use Case |
-| :--- | :--- |
-| **XTTS v2** | Professional Cloning (16 languages) - Default |
-| **VITS (LJSpeech)** | Ultra-fast English (Female) |
-| **VITS (VCTK)** | 100+ Pre-set English Voices |
-| **VITS (CSS10)** | High-speed Native Spanish |
-| **YourTTS** | Legacy Multilingual Cloning |
+### ⚙️ Command Line Arguments
+- `--host`: Host to bind (default: `127.0.0.1`).
+- `--port`: Port to bind (default: `5100`).
+- `--model`: Model name to pre-load into the Hot Worker (default: `xtts_v2`).
 
 ### 3. System Service (systemd)
 1. Create: `/etc/systemd/system/coqui-tts.service`
@@ -87,8 +71,8 @@ User=root
 WorkingDirectory=/usr/local/lib/coqui
 Environment="TTS_HOME=/opt/ai/models/speech/coqui-tts"
 Environment="VOICE_ASSET_DIR=/opt/ai/assets/voices"
-# Example starting with XTTSv2
-ExecStart=/usr/local/lib/coqui/venv/bin/python main_tts.py --model tts_models/multilingual/multi-dataset/xtts_v2
+# Example: Exposing to local network on port 5100
+ExecStart=/usr/local/lib/coqui/venv/bin/python main_tts.py --host 0.0.0.0 --port 5100
 Restart=always
 RestartSec=5
 
@@ -96,22 +80,15 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-3. Start: `sudo systemctl enable --now coqui-tts`
-
-## 🔍 Debugging & Monitoring
-
-Set `DEBUG=true` to enable worker routing traces:
-`DEBUG=true python main_tts.py`
+## 🔒 Security Note
+By default, the server binds to `127.0.0.1`. If you change this to `0.0.0.0`, the server will be accessible by anyone on your network. Since this API **does not have authentication**, please ensure you are behind a firewall or using a secure VPN.
 
 ## 📊 Performance (Uttera Metrics)
 
 | Task | Latency (Hot Lane) | Latency (Cold Lane) |
 | :--- | :--- | :--- |
 | Short Response (XTTSv2) | **~1.0s** | ~19s (Cold load) |
-| VITS Inference | **<0.5s** | ~4s (Cold load) |
 | Cached Response | **<0.02s** | <0.02s |
 
 ## 🛡 License
-
-GNU GPL v3. 
-Maintainers: Hugo L. Espuny & Uttera
+GNU GPL v3. Maintainers: Hugo L. Espuny & Uttera

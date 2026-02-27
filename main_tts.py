@@ -4,14 +4,13 @@
 # Coqui TTS Server (Hybrid Model)
 #
 # Package: coqui-tts-server
-# Version: 1.2.7
+# Version: 1.3.5
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with GPU acceleration, concurrency, and OpenAI API compliance.
 #
 # CHANGELOG:
+# - 1.3.5 (2026-02-27): Default bind set to 127.0.0.1. Unified CLI with host/port arguments.
 # - 1.2.7 (2026-02-27): Added --model CLI argument for pre-loading custom architectures.
-# - 1.2.6 (2026-02-27): Dynamic language param, English default, and README architecture documentation.
-# - 1.2.5 (2026-02-27): Default language set to 'en'. Full multilingual support.
 
 import os
 import sys
@@ -111,7 +110,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.2.7")
+app = FastAPI(title="Coqui TTS Server", version="1.3.5")
 
 # -------------------------------
 # 4. Core Logic
@@ -128,22 +127,18 @@ def convert_audio(input_path: str, output_path: str, fmt: str):
     subprocess.run(cmd, capture_output=True, check=True)
 
 def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
-    # Determine synthesis args based on model type
     kwargs = {"text": text, "file_path": output_path, "speed": speed}
     if "xtts" in active_model_name.lower() or "your_tts" in active_model_name.lower():
         kwargs["speaker_wav"] = speaker_wav
         kwargs["language"] = lang
-    
     tts_hot_worker.tts_to_file(**kwargs)
 
 def run_tts_cold_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
     sub_env = os.environ.copy()
     sub_env["COQUI_TOS_AGREED"] = "1"
     cmd = [VENV_PYTHON, TTS_SCRIPT, "--text", text, "--model_name", active_model_name, "--out_path", output_path, "--progress_bar", "False", "--use_cuda", "yes"]
-    
     if "xtts" in active_model_name.lower() or "your_tts" in active_model_name.lower():
         cmd.extend(["--speaker_wav", speaker_wav, "--language_idx", lang])
-        
     subprocess.run(cmd, capture_output=True, text=True, env=sub_env)
 
 @app.post("/v1/audio/speech")
@@ -195,10 +190,12 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Coqui TTS Local Server")
-    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Model name to pre-load (Hot Worker)")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Model name to pre-load")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=5100, help="Port to bind (default: 5100)")
     args = parser.parse_args()
     
     load_hot_worker(args.model)
     
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=5100)
+    uvicorn.run(app, host=args.host, port=args.port)
