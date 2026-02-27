@@ -39,6 +39,35 @@ For automatic mappings to work, files must be placed in the assets directory def
     └── redacted.wav
 ```
 
+## 🛠️ Advanced Workflow: Extracting Samples with FFmpeg
+
+To obtain a professional-grade sample from a source file (such as a movie or interview), you can use the following optimized FFmpeg workflow. This process isolates the voice, removes extreme frequencies, and normalizes the volume.
+
+### 1. Identify the Target Segment
+Find a segment where the character speaks clearly without music or background noise. Note the start time (`-ss`) and duration (`-t`).
+
+### 2. High-Fidelity Extraction Command
+Run the following command to extract and pre-process the audio:
+
+```bash
+ffmpeg -i input_movie.mkv \
+  -ss 01:22:15 -t 10 \
+  -vn -acodec pcm_s16le -ar 44100 -ac 1 \
+  -af "highpass=f=200, lowpass=f=3000, loudnorm=I=-16:TP=-1.5:LRA=11" \
+  /opt/ai/assets/voices/elite/target_voice.wav
+```
+
+### ⚙️ Command Breakdown:
+* `-ss 01:22:15`: Starts extraction at 1 hour, 22 minutes, and 15 seconds.
+* `-t 10`: Extracts exactly 10 seconds.
+* `-vn`: Discards video stream.
+* `-acodec pcm_s16le`: Encodes in 16-bit PCM (WAV standard).
+* `-ar 44100 -ac 1`: Sets 44.1kHz sample rate and forces Mono (cleaner for cloning).
+* `-af "..."`: Audio filters chain:
+    * `highpass=f=200`: Removes low-end rumble and hum.
+    * `lowpass=f=3000`: Removes high-frequency hiss (adjust to 4000-5000 for modern voices).
+    * `loudnorm`: Normalizes the voice to EBU R128 standards for consistent volume.
+
 ## 🔍 Tips for Sophisticated Cloning
 
 * **Normalization:** Use tools like Audacity or FFmpeg to normalize the sample volume to -3dB.

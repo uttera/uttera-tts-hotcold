@@ -10,7 +10,7 @@ High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architectu
   - **Hot Worker:** Keeps an XTTSv2 model resident in VRAM for fast (1.0s) inference.
   - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy, ensuring true parallel synthesis.
 - **OpenAI Compatible:** Native support for `application/json` and OpenAI parameters (`model`, `voice`, `speed`, `response_format`).
-- **Stark Elite Gallery:** Pre-mapped voices for iconic AIs like assistant, voice-b, a character, a voice, a character, and more. *Note: Voice samples are not included due to copyright. Please refer to [CLONE_VOICES.txt](./CLONE_VOICES.txt) for instructions on how to obtain and install your own reference files.*
+- **Stark Elite Gallery:** Pre-mapped voices for iconic AIs like assistant, voice-b, a character, a voice, a character, and more. *Note: Voice samples are not included due to copyright. Please refer to [CLONE_VOICES.md](./CLONE_VOICES.md) for instructions on how to obtain and install your own reference files.*
 - **Multi-Format Output:** Real-time conversion to `mp3`, `opus`, `flac`, or `wav` via FFmpeg.
 - **Production-Ready:** Infrastructure-grade orchestrator with hardware lock management and intelligent caching.
 
