@@ -1,0 +1,22 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.0.0] - 2026-02-27
+
+### Added
+- Initial stable production release.
+- End-to-end voice cloning pipeline documentation.
+- Integrated SoX denoising workflow for high-fidelity audio samples.
+- Support for automated sample rate conversion.
+- Support for character voice engineering and specialized synthesis.
+
+### Changed
+- Improved PyPI compatibility by renaming package dependencies.
+- Updated documentation for local-only private inference.
+
+### Fixed
+- Various minor bugs in the FastAPI/Uvicorn interface.
