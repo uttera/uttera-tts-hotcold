@@ -7,92 +7,36 @@ High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architectu
 ## 🚀 Key Features
 
 - **Hybrid Concurrency:**
-  - **Hot Worker:** Keeps an XTTSv2 model resident in VRAM for fast (1.0s) inference.
-  - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy, ensuring true parallel synthesis.
-- **OpenAI Compatible:** Native support for `application/json` and OpenAI parameters (`model`, `voice`, `speed`, `response_format`).
-- **Stark Elite Gallery:** Pre-mapped voices for iconic AIs like assistant, voice-b, a character, a voice, a character, and more. *Note: Voice samples are not included due to copyright. Please refer to [CLONE_VOICES.md](./CLONE_VOICES.md) for instructions on how to obtain and install your own reference files.*
-- **Multi-Format Output:** Real-time conversion to `mp3`, `opus`, `flac`, or `wav` via FFmpeg.
-- **Production-Ready:** Infrastructure-grade orchestrator with hardware lock management and intelligent caching.
+  - **Hot Worker:** Keeps an XTTSv2 model resident in VRAM for fast inference.
+  - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy.
+- **OpenAI Compatible:** Native support for OpenAI parameters (`model`, `voice`, `speed`, `response_format`).
+- **Stark Elite Gallery:** Pre-mapped voices for iconic AIs like assistant, voice-b, a character, and more.
+- **Multi-Format Output:** Real-time conversion to `mp3`, `opus`, `flac`, or `wav`.
 
-## 📦 Requirements
+## 📦 Installation & Setup
 
-- **Coqui TTS:** This server is built upon the official [Coqui TTS Engine](https://github.com/coqui-ai/TTS).
-- **FFmpeg:** Required for real-time audio conversion.
-- **NVIDIA GPU:** Mandatory for hardware acceleration (CUDA).
-- **Python 3.10+**
-- **espeak-ng:** Mandatory for phonemization in many models.
+To simplify the deployment, we provide a unified provisioning script that installs system dependencies, creates the folder structure, and downloads the recommended models and voices.
 
-## ⚙️ Setup & Dependencies
-
-It is highly recommended to install the dependencies within a virtual environment.
-
+### 1. Clone and Install Python Dependencies
 ```bash
-# 1. Install system dependency
-sudo apt-get update && sudo apt-get install -y espeak-ng
-
-# 2. Create a virtual environment
+git clone https://github.com/fakehec/coqui-tts-local-server.git
+cd coqui-tts-local-server
 python3 -m venv venv
 source venv/bin/activate
-
-# 3. Install dependencies
 pip install -r requirements.txt
 ```
 
-### 📦 Prerequisites & Model Setup
-
-Before running the server, you must ensure the models are downloaded to the correct path. By default, the server expects models at `/opt/ai/models/speech/coqui-tts`.
+### 2. Provision Assets (Models & Voices)
+Run the automated script to set up `espeak-ng`, standard voices (`alloy`, etc.), and the XTTS/VITS models in `/opt/ai/`:
 
 ```bash
-# 1. Create the model directory
-sudo mkdir -p /opt/ai/models/speech/coqui-tts
-sudo chown -R $USER:$USER /opt/ai/models/speech/
-
-# 2. Configure path
-export TTS_HOME="/opt/ai/models/speech/coqui-tts"
+chmod +x setup_assets.sh
+./setup_assets.sh
 ```
 
-### 📥 Verified Download Commands
+## 🛠 Execution
 
-Run these exact commands to provision your local model gallery.
-
-#### 1. XTTS v2 (Uttera Orchestrator)
-*Requires a reference voice file to initialize.*
-```bash
-tts --model_name tts_models/multilingual/multi-dataset/xtts_v2 \
-    --text "init" --language_idx "en" \
-    --speaker_wav "/opt/ai/assets/voices/standard/alloy.wav" \
-    --out_path "/tmp/init.wav"
-```
-
-#### 2. VITS - LJSpeech (Ultra-fast English)
-```bash
-tts --model_name tts_models/en/ljspeech/vits \
-    --text "init" --out_path "/tmp/init.wav"
-```
-
-#### 3. VITS - VCTK (100+ English Voices)
-*Requires a speaker ID to initialize.*
-```bash
-tts --model_name tts_models/en/vctk/vits \
-    --text "init" --speaker_idx "p225" --out_path "/tmp/init.wav"
-```
-
-#### 4. VITS - CSS10 (High-speed Native Spanish)
-```bash
-tts --model_name tts_models/es/css10/vits \
-    --text "init" --out_path "/tmp/init.wav"
-```
-
-#### 5. YourTTS (Legacy Multilingual)
-```bash
-tts --model_name tts_models/multilingual/multi-dataset/your_tts \
-    --text "init" --language_idx "en" \
-    --speaker_wav "/opt/ai/assets/voices/standard/alloy.wav" \
-    --out_path "/tmp/init.wav"
-```
-
-## 🛠 Installation & Execution
-
+### Manual Execution (Console)
 ```bash
 # Execute using Uvicorn
 uvicorn main_tts:app --host 0.0.0.0 --port 5100
@@ -106,7 +50,15 @@ To ensure sub-second latency, this server uses a **Hot Worker** model. The prima
 *   **Startup Override**: Use the `--model` flag: `python main_tts.py --model <model_name>`.
 *   **API Compliance Note**: The `model` parameter in API requests is currently ignored for performance reasons.
 
-### 2. System Service (systemd)
+### 📦 Recommended Models Gallery
+
+| Model Name | Primary Use Case |
+| :--- | :--- |
+| **XTTS v2** | Professional Cloning (16 languages) |
+| **VITS (LJSpeech)** | Ultra-fast English (Female) |
+| **VITS (CSS10)** | High-speed Native Spanish |
+
+### 3. System Service (systemd)
 1. Create: `/etc/systemd/system/coqui-tts.service`
 2. Configuration:
 
@@ -134,10 +86,7 @@ WantedBy=multi-user.target
 ## 🔍 Debugging & Monitoring
 
 Set `DEBUG=true` to enable worker routing traces:
-
-```bash
-DEBUG=true uvicorn main_tts:app --host 0.0.0.0 --port 5100
-```
+`DEBUG=true uvicorn main_tts:app --host 0.0.0.0 --port 5100`
 
 ## 📊 Performance (Sphinx GPU)
 
