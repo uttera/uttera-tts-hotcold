@@ -44,11 +44,10 @@ The server uses direct **Uvicorn** execution for maximum ASGI performance.
 ```bash
 source venv/bin/activate
 
-# Default: Localhost only (127.0.0.1:5100)
+# Localhost only (Default: 127.0.0.1:5100)
 uvicorn main_tts:app --host 127.0.0.1 --port 5100
 
 # Expose to Local Network (0.0.0.0)
-# WARNING: The server has NO AUTHENTICATION. Exposing it to the network is a security risk.
 uvicorn main_tts:app --host 0.0.0.0 --port 5100
 ```
 
@@ -72,7 +71,6 @@ WorkingDirectory=/usr/local/lib/coqui
 Environment="TTS_HOME=/opt/ai/models/speech/coqui-tts"
 Environment="VOICE_ASSET_DIR=/opt/ai/assets/voices"
 Environment="TTS_MODEL=tts_models/multilingual/multi-dataset/xtts_v2"
-# Default bind to localhost for security
 ExecStart=/usr/local/lib/coqui/venv/bin/uvicorn main_tts:app --host 127.0.0.1 --port 5100
 Restart=always
 RestartSec=5
@@ -81,10 +79,10 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-**Note:** By default, the server starts on `127.0.0.1` at port `5100`. To allow external network access, modify the `--host` parameter to `0.0.0.0` in the `ExecStart` line above.
-
-## 🔒 Security Note
-By default, the server binds to `127.0.0.1`. If you change this to `0.0.0.0`, the server will be accessible by anyone on your network. Since this API **does not have authentication**, please ensure you are behind a firewall or using a secure VPN.
+## 🔒 Security & Network Note
+By default, the server binds to **`127.0.0.1`** on port **`5100`**. 
+- To allow external network access, modify the `--host` parameter to `0.0.0.0` in the execution command or systemd unit.
+- **WARNING**: This API **does not have authentication**. Exposing it to the network via `0.0.0.0` represents a security risk. Ensure the server is protected by a firewall or operating within a secure VPN/Local Network.
 
 ## 📊 Performance (Uttera Metrics)
 | Task | Latency (Hot Lane) | Latency (Cold Lane) |
