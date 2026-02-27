@@ -44,17 +44,40 @@ For automatic mappings to work, files must be placed in the assets directory def
 To obtain a professional-grade sample from any online source (such as YouTube) or a local file, you can follow this end-to-end workflow. This process involves downloading, precise extraction, and acoustic optimization.
 
 ### 1. Download & Initial Extraction (YouTube)
-If your source is on YouTube, use `yt-dlp` to extract the highest quality audio directly:
+Use `yt-dlp` to extract the highest quality audio directly. For iconic voices like a character, seek high-quality compilations:
 
 ```bash
-yt-dlp -x --audio-format wav --audio-quality 0 "https://www.youtube.com/watch?v=VIDEO_ID" -o "raw_source.wav"
+# Install yt-dlp if not present
+pip install yt-dlp
+
+# Download the source (Example: a character recording)
+yt-dlp -x --audio-format wav -o "raw_source.wav" "https://example.com/your-own-recording"
 ```
 
-### 2. Identify the Target Segment
-Find a segment (6-12s) where the character speaks clearly without music or background noise. Note the start time (`-ss`) and duration (`-t`).
+### 2. Identify and Isolate the Target Segment
+Find a segment (6-12s) where the character speaks clearly.
 
-### 3. Professional Mastering with FFmpeg
-Run the following optimized command to isolate and master the voice:
+```bash
+# Isolate a clear part of the clip
+ffmpeg -i raw_source.wav -ss 00:00:48 -t 10 -ac 1 -ar 22050 clear_sample.wav
+```
+
+### 3. Professional Mastering & Denoising (Advanced)
+If the source has persistent background hiss (common in older films), use `sox` to create a noise profile and clean the sample:
+
+```bash
+# 1. Isolate a short segment of pure background noise (no voice)
+sox clear_sample.wav noise_only.wav trim 0 0.5
+
+# 2. Generate the noise profile
+sox noise_only.wav -n noiseprof voice_noise.prof
+
+# 3. Apply noise reduction to the main sample
+sox clear_sample.wav mastered_voice.wav noisered voice_noise.prof 0.21
+```
+
+### 4. Alternative: One-Step Mastering with FFmpeg
+If the source is relatively clean, this unified command handles isolation and normalization:
 
 ```bash
 ffmpeg -i raw_source.wav \
