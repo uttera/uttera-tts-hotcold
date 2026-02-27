@@ -25,15 +25,13 @@ High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architectu
 
 It is highly recommended to install the dependencies within a virtual environment.
 
-**Note:** You must first install the core Coqui TTS library following the instructions in its [official repository](https://github.com/coqui-ai/TTS).
-
 ```bash
 # 1. Create a virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
-# 2. Install core requirements and web server components
-pip install TTS fastapi uvicorn
+# 2. Install dependencies
+pip install -r requirements.txt
 ```
 
 ## 🛠 Installation

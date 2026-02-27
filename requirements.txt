@@ -1,0 +1,5 @@
+TTS
+torch
+fastapi
+uvicorn
+pydantic
