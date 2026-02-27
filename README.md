@@ -19,7 +19,6 @@ This server uses **Coqui TTS**, which is released under various licenses dependi
   - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy.
 - **OpenAI Compatible:** Native support for OpenAI parameters (`model`, `voice`, `speed`, `response_format`).
 - **Multilingual Excellence:** Native support for 16+ languages (English by default).
-- **Stark Elite Gallery:** Pre-mapped identities for assistant, voice-b, a character, and more.
 - **Intelligent Caching:** MD5-based caching for zero-latency repeated requests.
 
 ## 📦 Installation & Setup
@@ -32,29 +31,30 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-### 2. Manual Vocal Provisioning (Mandatory)
-Due to copyright and licensing, reference voice files (.wav) are **not provided**. You must provide your own samples in `/opt/ai/assets/voices/`. Refer to [CLONE_VOICES.md](./CLONE_VOICES.md).
+### 2. Vocal Provisioning
+- **Standard Voices**: The server automatically provisions the 6 standard OpenAI identities (Alloy, Echo, Fable, Onyx, Nova, Shimmer) during setup.
+- **Elite/Custom Voices**: Reference voice files (.wav) for custom cloning are **not provided** due to copyright. Place your samples in `/opt/ai/assets/voices/elite/`.
+- Refer to [CLONE_VOICES.md](./CLONE_VOICES.md) for instructions on creating high-quality reference files.
 
 ## 🛠 Execution
 
-The server is unified under the `main_tts.py` entry point.
+The server uses direct **Uvicorn** execution for maximum ASGI performance.
 
 ### Manual Execution (Console)
 ```bash
 source venv/bin/activate
 
 # Localhost only (Default: 127.0.0.1:5100)
-python main_tts.py
+uvicorn main_tts:app --host 127.0.0.1 --port 5100
 
 # Expose to Network (0.0.0.0)
 # WARNING: The server has NO AUTHENTICATION. Exposing it to the network is a security risk.
-python main_tts.py --host 0.0.0.0 --port 5100 --model tts_models/multilingual/multi-dataset/xtts_v2
+uvicorn main_tts:app --host 0.0.0.0 --port 5100
 ```
 
-### ⚙️ Command Line Arguments
-- `--host`: Host to bind (default: `127.0.0.1`).
-- `--port`: Port to bind (default: `5100`).
-- `--model`: Model name to pre-load into the Hot Worker (default: `xtts_v2`).
+### ⚙️ Environment Variables
+- `TTS_MODEL`: Model name to pre-load into the Hot Worker (default: `xtts_v2`).
+- `DEBUG`: Set to `true` to enable worker routing traces.
 
 ### 3. System Service (systemd)
 1. Create: `/etc/systemd/system/coqui-tts.service`
@@ -71,8 +71,9 @@ User=root
 WorkingDirectory=/usr/local/lib/coqui
 Environment="TTS_HOME=/opt/ai/models/speech/coqui-tts"
 Environment="VOICE_ASSET_DIR=/opt/ai/assets/voices"
-# Example: Exposing to local network on port 5100
-ExecStart=/usr/local/lib/coqui/venv/bin/python main_tts.py --host 0.0.0.0 --port 5100
+Environment="TTS_MODEL=tts_models/multilingual/multi-dataset/xtts_v2"
+# Point directly to the venv uvicorn binary
+ExecStart=/usr/local/lib/coqui/venv/bin/uvicorn main_tts:app --host 0.0.0.0 --port 5100
 Restart=always
 RestartSec=5
 
@@ -81,10 +82,9 @@ WantedBy=multi-user.target
 ```
 
 ## 🔒 Security Note
-By default, the server binds to `127.0.0.1`. If you change this to `0.0.0.0`, the server will be accessible by anyone on your network. Since this API **does not have authentication**, please ensure you are behind a firewall or using a secure VPN.
+By default, the server binds to `127.0.0.1`. If you change this to `0.0.0.0`, the server will be accessible by anyone on your network. Since this API **does not have authentication**, ensure you are behind a firewall.
 
 ## 📊 Performance (Uttera Metrics)
-
 | Task | Latency (Hot Lane) | Latency (Cold Lane) |
 | :--- | :--- | :--- |
 | Short Response (XTTSv2) | **~1.0s** | ~19s (Cold load) |
