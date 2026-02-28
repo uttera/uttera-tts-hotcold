@@ -5,13 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.5] - 2026-02-28
+## [1.0.6] - 2026-02-28
 
 ### Added
-- Restored full Debian/Ubuntu style header in `main_tts.py` including license and architecture description.
-- Explicit GNU GPL v3 license declaration.
+- Consolidated architecture headers and GNU GPL v3 license from reference implementation in `/mnt/host-sharedir/`.
+- Detailed description of the hybrid concurrency model (Hot/Cold workers).
 
-## [1.0.4] - 2026-02-28
+## [1.0.5] - 2026-02-28
 
 ### Added
 - Automated Hotfix in `setup.sh` to resolve `isin_mps_friendly` import error in Coqui-TTS/Transformers.

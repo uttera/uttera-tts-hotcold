@@ -1,20 +1,56 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Coqui TTS Server (Hybrid Model)
+# main_tts.py - Coqui TTS Hybrid-Worker Server
+# Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.0.5
-# License: GNU GPL v3
+# Version: 1.0.6
 # Maintainer: Uttera, Hugo L. Espuny
 #
-# Description:
-# High-performance TTS server with GPU acceleration and OpenAI API compliance.
-# Implements a hybrid concurrency model:
-# - Hot Lane: Primary resident model in VRAM for zero-latency inference.
-# - Cold Lane: Dynamic subprocess workers for handling concurrent requests.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, see <https://www.gnu.org/licenses/>.
+#
+#
+# --- Architecture Summary ---
+#
+# This server implements a hybrid "hot/cold" worker model to provide
+# true concurrent TTS synthesis from a single FastAPI instance.
+#
+# * MAIN LANE (Hot Worker):
+#   An XTTSv2 model is pre-loaded into VRAM on startup ('tts_hot_worker')
+#   It is protected by a threading.Lock ('model_lock') to prevent race
+#   conditions, as the TTS object is not thread-safe.
+#   It runs in a separate thread via asyncio.to_thread().
+#
+# * CHILD LANE (Cold Worker):
+#   If the 'model_lock' is busy, the request is rerouted to the
+#   'run_tts_cold_lane' function.
+#
+# * Concurrency Solution (GIL Bypass):
+#   The CHILD LANE uses a synchronous subprocess call (run in an async
+#   thread) to spawn a new 'tts' process. This new process is not
+#   blocked by the main process's Global Interpreter Lock (GIL),
+#   allowing it to run in true parallel on the GPU.
+#
+# * Deadlock Fixes:
+#   1. (License): The 'COQUI_TOS_AGREED=1' env var is passed to the
+#      subprocess to prevent it from hanging on the [y/n] license prompt.
+#   2. (Logs): 'capture_output=True' is used carefully to ensure logs
+#      are available for debugging without causing buffer deadlocks.
 #
 # CHANGELOG:
+# - 1.0.6 (2026-02-28): Consolidated original architecture headers and GNU GPL license from shared storage.
 # - 1.0.5 (2026-02-28): Restored full Debian/Ubuntu style header and GPL license.
 # - 1.0.4 (2026-02-28): Fixed standard voice sources and restored all 5 provisioned models.
 # - 1.0.3 (2026-02-28): Complete No-Sudo installation and local 'assets' path standardization.
@@ -119,7 +155,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.0.5")
+app = FastAPI(title="Coqui TTS Server", version="1.0.6")
 
 @app.on_event("startup")
 async def startup_event():
