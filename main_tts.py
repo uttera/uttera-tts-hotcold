@@ -85,8 +85,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 os.makedirs(ASSETS_DIR, exist_ok=True)
 
-VENV_PYTHON = "/usr/local/lib/coqui/venv/bin/python"
-TTS_SCRIPT = "/usr/local/lib/coqui/venv/bin/tts"
+VENV_PYTHON = os.environ.get("VENV_PYTHON", os.path.join(BASE_DIR, "venv/bin/python"))
+TTS_SCRIPT = os.environ.get("TTS_SCRIPT", os.path.join(BASE_DIR, "venv/bin/tts"))
 DEFAULT_MODEL = "tts_models/multilingual/multi-dataset/xtts_v2"
 
 # Storage Paths
