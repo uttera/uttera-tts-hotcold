@@ -5,7 +5,7 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.1.2
+# Version: 1.1.3
 # Maintainer: Uttera, Hugo L. Espuny
 #
 # This program is free software; you can redistribute it and/or modify
@@ -155,7 +155,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.1.2")
+app = FastAPI(title="Coqui TTS Server", version="1.1.3")
 
 # -------------------------------
 # 4. Core Logic: The Two Lanes
@@ -190,6 +190,7 @@ async def run_tts_child_lane_async(text: str, lang: str, speaker_wav_path: str, 
     sub_env["COQUI_TOS_AGREED"] = "1"
     sub_env["TTS_HOME"] = MODEL_CACHE_DIR
     
+    # Adjusted CLI flags for local tts binary compatibility
     cmd = [
         VENV_PYTHON, TTS_SCRIPT,
         "--text", text,
@@ -197,8 +198,8 @@ async def run_tts_child_lane_async(text: str, lang: str, speaker_wav_path: str, 
         "--speaker_wav", speaker_wav_path,
         "--language_idx", lang,
         "--out_path", output_path,
-        "--progress_bar", "False",
-        "--use_cuda", "yes"
+        "--no-progress_bar",
+        "--use_cuda"
     ]
     
     if DEBUG: print(f"DEBUG EXEC: {' '.join(cmd)}", flush=True)
