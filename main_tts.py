@@ -4,10 +4,6 @@
 # main_tts.py - Coqui TTS Hybrid-Worker Server
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
-# Package: coqui-tts-server
-# Version: 1.0.6
-# Maintainer: Uttera, Hugo L. Espuny
-#
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 3 of the License, or
@@ -29,33 +25,29 @@
 #
 # * MAIN LANE (Hot Worker):
 #   An XTTSv2 model is pre-loaded into VRAM on startup ('tts_hot_worker')
+#   and pre-heated with the default voice (voice-c).
 #   It is protected by a threading.Lock ('model_lock') to prevent race
 #   conditions, as the TTS object is not thread-safe.
 #   It runs in a separate thread via asyncio.to_thread().
 #
 # * CHILD LANE (Cold Worker):
 #   If the 'model_lock' is busy, the request is rerouted to the
-#   'run_tts_cold_lane' function.
+#   'run_tts_child_lane' function.
 #
 # * Concurrency Solution (GIL Bypass):
-#   The CHILD LANE uses a synchronous subprocess call (run in an async
-#   thread) to spawn a new 'tts' process. This new process is not
-#   blocked by the main process's Global Interpreter Lock (GIL),
-#   allowing it to run in true parallel on the GPU.
+#   The CHILD LANE is an 'async' function that uses
+#   'await asyncio.create_subprocess_exec' to spawn a new
+#   'tts' process. This new process is not blocked by the main
+#   process's Global Interpreter Lock (GIL), allowing it to run in
+#   true parallel.
 #
 # * Deadlock Fixes:
 #   1. (License): The 'COQUI_TOS_AGREED=1' env var is passed to the
 #      subprocess to prevent it from hanging on the [y/n] license prompt.
-#   2. (Logs): 'capture_output=True' is used carefully to ensure logs
-#      are available for debugging without causing buffer deadlocks.
+#   2. (Logs): 'await process.communicate()' is used to consume the
+#      stdout/stderr pipes, preventing a buffer deadlock if the
+#      subprocess is too verbose.
 #
-# CHANGELOG:
-# - 1.0.6 (2026-02-28): Consolidated original architecture headers and GNU GPL license from shared storage.
-# - 1.0.5 (2026-02-28): Restored full Debian/Ubuntu style header and GPL license.
-# - 1.0.4 (2026-02-28): Fixed standard voice sources and restored all 5 provisioned models.
-# - 1.0.3 (2026-02-28): Complete No-Sudo installation and local 'assets' path standardization.
-# - 1.0.1 (2026-02-28): Automated Hotfix in setup.sh and requirement updates.
-# - 1.0.0 (2026-02-27): Initial stable production release.
 
 import os
 import uuid
@@ -133,11 +125,10 @@ def load_hot_worker():
         worker = TTS(model_name=model_name, progress_bar=False)
         worker.to("cuda")
         
-        if "xtts" in model_name.lower():
-            # Standard warm-up with alloy
-            warmup_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
-            if os.path.exists(warmup_wav):
-                worker.tts("System online.", speaker_wav=warmup_wav, language="en")
+        # Pre-heating with alloy (Standard warm-up)
+        warmup_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
+        if os.path.exists(warmup_wav):
+            worker.tts("Ready to serve.", speaker_wav=warmup_wav, language="en")
         
         tts_hot_worker = worker
         if DEBUG: print(f"[+] Hot worker loaded and ready on GPU.")
@@ -155,7 +146,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.0.6")
+app = FastAPI(title="Coqui TTS Server", version="1.0.8")
 
 @app.on_event("startup")
 async def startup_event():
@@ -183,14 +174,38 @@ def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, outpu
         kwargs["language"] = lang
     tts_hot_worker.tts_to_file(**kwargs)
 
-def run_tts_cold_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
+async def run_tts_child_lane_async(text: str, lang: str, speaker_wav_path: str, output_path: str):
+    """
+    CHILD LANE: Async subprocess execution to bypass GIL and prevent deadlocks.
+    """
     model_name = os.environ.get("TTS_MODEL", DEFAULT_MODEL)
     sub_env = os.environ.copy()
     sub_env["COQUI_TOS_AGREED"] = "1"
-    cmd = [VENV_PYTHON, TTS_SCRIPT, "--text", text, "--model_name", model_name, "--out_path", output_path, "--progress_bar", "False", "--use_cuda", "yes"]
-    if "xtts" in model_name.lower() or "your_tts" in model_name.lower():
-        cmd.extend(["--speaker_wav", speaker_wav, "--language_idx", lang])
-    subprocess.run(cmd, capture_output=True, text=True, env=sub_env)
+    sub_env["TTS_HOME"] = MODEL_CACHE_DIR
+
+    cmd = [
+        VENV_PYTHON, TTS_SCRIPT,
+        "--text", text,
+        "--model_name", model_name,
+        "--speaker_wav", speaker_wav_path,
+        "--language_idx", lang,
+        "--out_path", output_path,
+        "--progress_bar", "False",
+        "--use_cuda", "yes"
+    ]
+
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=sub_env
+    )
+    
+    # Wait for process to finish and consume pipes to prevent buffer deadlock
+    stdout, stderr = await process.communicate()
+    
+    if process.returncode != 0:
+        raise Exception(f"Cold Lane Subprocess failed (code {process.returncode}): {stderr.decode()}")
 
 @app.post("/v1/audio/speech")
 async def create_speech(request: Request, background_tasks: BackgroundTasks):
@@ -218,7 +233,6 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         speaker_wav = os.path.join(VOICE_ASSET_DIR, v_file)
         voice_id = req.voice.lower()
         if not os.path.exists(speaker_wav): 
-            if DEBUG: print(f"[!] Voice not found: {speaker_wav}. Defaulting to alloy.")
             speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
 
     lang = req.language if req.language else "en"
@@ -233,7 +247,10 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         if tts_hot_worker and model_lock.acquire(blocking=False):
             try: await asyncio.to_thread(run_tts_hot_lane, req.input, lang, speaker_wav, req.speed, temp_wav)
             finally: model_lock.release()
-        else: await asyncio.to_thread(run_tts_cold_lane, req.input, lang, speaker_wav, req.speed, temp_wav)
+        else: 
+            # CHILD LANE: True async parallel processing
+            await run_tts_child_lane_async(req.input, lang, speaker_wav, temp_wav)
+        
         convert_audio(temp_wav, final_output_path, req.response_format)
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
     finally:
