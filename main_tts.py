@@ -5,7 +5,7 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.0.7
+# Version: 1.0.6
 # Maintainer: Uttera, Hugo L. Espuny
 #
 # This program is free software; you can redistribute it and/or modify
@@ -50,7 +50,6 @@
 #      are available for debugging without causing buffer deadlocks.
 #
 # CHANGELOG:
-# - 1.0.7 (2026-02-28): Stability fix: Added 200ms sleep before ffmpeg conversion and improved temporary file management to prevent race conditions during concurrent bursts.
 # - 1.0.6 (2026-02-28): Consolidated original architecture headers and GNU GPL license from shared storage.
 # - 1.0.5 (2026-02-28): Restored full Debian/Ubuntu style header and GPL license.
 # - 1.0.4 (2026-02-28): Fixed standard voice sources and restored all 5 provisioned models.
@@ -67,7 +66,6 @@ import tempfile
 import subprocess
 import threading
 import warnings
-import time
 from typing import Optional, List, Union
 
 # Suppress noisy warnings
@@ -157,7 +155,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.0.7")
+app = FastAPI(title="Coqui TTS Server", version="1.0.6")
 
 @app.on_event("startup")
 async def startup_event():
@@ -170,23 +168,12 @@ def convert_audio(input_path: str, output_path: str, fmt: str):
     if fmt == "wav":
         shutil.copy(input_path, output_path)
         return
-    
-    # Stability: Brief pause to ensure disk flush of the temporary WAV file
-    # This prevents race conditions where ffmpeg starts before the file is fully ready
-    time.sleep(0.2)
-    
-    if not os.path.exists(input_path):
-        raise FileNotFoundError(f"Input WAV file missing: {input_path}")
-
     cmd = ["ffmpeg", "-y", "-i", input_path]
     if fmt == "mp3": cmd.extend(["-codec:a", "libmp3lame", "-qscale:a", "2"])
     elif fmt == "opus": cmd.extend(["-codec:a", "libopus", "-b:a", "64k"])
     elif fmt == "flac": cmd.extend(["-codec:a", "flac"])
     cmd.append(output_path)
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise Exception(f"FFmpeg failed (code {result.returncode}): {result.stderr}")
+    subprocess.run(cmd, capture_output=True, check=True)
 
 def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
     kwargs = {"text": text, "file_path": output_path, "speed": speed}
@@ -200,14 +187,10 @@ def run_tts_cold_lane(text: str, lang: str, speaker_wav: str, speed: float, outp
     model_name = os.environ.get("TTS_MODEL", DEFAULT_MODEL)
     sub_env = os.environ.copy()
     sub_env["COQUI_TOS_AGREED"] = "1"
-    sub_env["TTS_HOME"] = MODEL_CACHE_DIR
     cmd = [VENV_PYTHON, TTS_SCRIPT, "--text", text, "--model_name", model_name, "--out_path", output_path, "--progress_bar", "False", "--use_cuda", "yes"]
     if "xtts" in model_name.lower() or "your_tts" in model_name.lower():
         cmd.extend(["--speaker_wav", speaker_wav, "--language_idx", lang])
-    
-    result = subprocess.run(cmd, capture_output=True, text=True, env=sub_env)
-    if result.returncode != 0:
-         raise Exception(f"Cold Lane Subprocess failed: {result.stderr}")
+    subprocess.run(cmd, capture_output=True, text=True, env=sub_env)
 
 @app.post("/v1/audio/speech")
 async def create_speech(request: Request, background_tasks: BackgroundTasks):
@@ -245,23 +228,16 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
     
     if os.path.exists(final_output_path): return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
 
-    # Use unique temporary filename for WAV to avoid race conditions
     temp_wav = os.path.join(tempfile.gettempdir(), f"tts_{uuid.uuid4()}.wav")
     try:
         if tts_hot_worker and model_lock.acquire(blocking=False):
             try: await asyncio.to_thread(run_tts_hot_lane, req.input, lang, speaker_wav, req.speed, temp_wav)
             finally: model_lock.release()
         else: await asyncio.to_thread(run_tts_cold_lane, req.input, lang, speaker_wav, req.speed, temp_wav)
-        
-        await asyncio.to_thread(convert_audio, temp_wav, final_output_path, req.response_format)
+        convert_audio(temp_wav, final_output_path, req.response_format)
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Cleanup temporary files (Wait briefly if needed to avoid lock errors)
-        if os.path.exists(temp_wav): 
-            try: os.remove(temp_wav)
-            except: pass
-        if custom_wav_path and os.path.exists(custom_wav_path): 
-            try: os.remove(custom_wav_path)
-            except: pass
+        if os.path.exists(temp_wav): os.remove(temp_wav)
+        if custom_wav_path and os.path.exists(custom_wav_path): os.remove(custom_wav_path)
 
     return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
