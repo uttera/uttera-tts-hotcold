@@ -146,7 +146,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.0.8")
+app = FastAPI(title="Coqui TTS Server", version="1.0.9")
 
 @app.on_event("startup")
 async def startup_event():
@@ -190,8 +190,7 @@ async def run_tts_child_lane_async(text: str, lang: str, speaker_wav_path: str, 
         "--speaker_wav", speaker_wav_path,
         "--language_idx", lang,
         "--out_path", output_path,
-        "--progress_bar", "False",
-        "--use_cuda", "yes"
+        "--use_cuda",
     ]
 
     process = await asyncio.create_subprocess_exec(
