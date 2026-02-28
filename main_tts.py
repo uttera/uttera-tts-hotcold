@@ -5,7 +5,7 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.1.0
+# Version: 1.1.1
 # Maintainer: Uttera, Hugo L. Espuny
 #
 # This program is free software; you can redistribute it and/or modify
@@ -48,9 +48,8 @@
 # * Deadlock Fixes:
 #   1. (License): The 'COQUI_TOS_AGREED=1' env var is passed to the
 #      subprocess to prevent it from hanging on the [y/n] license prompt.
-#   2. (Logs): 'await process.communicate()' is used to consume the
-#      stdout/stderr pipes, preventing a buffer deadlock if the
-#      subprocess is too verbose.
+#   2. (Logs): In DEBUG mode, subprocess output is directed to stdout 
+#      directly to ensure visibility without buffer deadlocks.
 #
 
 import os
@@ -63,6 +62,7 @@ import tempfile
 import subprocess
 import threading
 import warnings
+import sys
 from typing import Optional, List, Union
 
 # Suppress noisy warnings
@@ -103,17 +103,13 @@ VOICE_ASSET_DIR = os.environ.get("VOICE_ASSET_DIR", VOICE_ASSET_DIR)
 DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
 
 # --- Voice Mapping: OpenAI Standards & Elite Gallery ---
-# Each key points to a .wav reference file in VOICE_ASSET_DIR
 VOICE_MAP = {
-    # OpenAI Standard Mappings
     "alloy": "standard/alloy.wav",
     "echo": "standard/echo.wav",
     "fable": "standard/fable.wav",
     "onyx": "standard/onyx.wav",
     "nova": "standard/nova.wav",
     "shimmer": "standard/shimmer.wav",
-    
-    # Stark Elite Gallery
     "narrator": "elite/redacted-voice.wav",
     "voice-b": "elite/redacted-voice.wav",
     "voice-c": "elite/redacted-voice.wav",
@@ -133,20 +129,19 @@ tts_hot_worker = None
 
 def load_hot_worker():
     global tts_hot_worker
-    if DEBUG: print(f"[*] Loading HOT WORKER model: {MODEL_NAME}")
+    if DEBUG: print(f"[*] Loading HOT WORKER model: {MODEL_NAME}", flush=True)
     try:
         torch.backends.cudnn.benchmark = True
         worker = TTS(model_name=MODEL_NAME, progress_bar=False)
         worker.to("cuda")
         
-        # Warm up with a silent reference or default
         warmup_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
         if os.path.exists(warmup_wav):
             worker.tts("System online.", speaker_wav=warmup_wav, language="en")
-            if DEBUG: print("[+] Hot worker warmed up and ready on GPU.")
+            if DEBUG: print("[+] Hot worker warmed up and ready on GPU.", flush=True)
         tts_hot_worker = worker
     except Exception as e:
-        print(f"[!] CRITICAL ERROR: Failed to load hot worker: {e}")
+        print(f"[!] CRITICAL ERROR: Failed to load hot worker: {e}", flush=True)
 
 load_hot_worker()
 
@@ -160,31 +155,28 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.1.0")
+app = FastAPI(title="Coqui TTS Server", version="1.1.1")
 
 # -------------------------------
 # 4. Core Logic: The Two Lanes
 # -------------------------------
 
 def convert_audio(input_path: str, output_path: str, fmt: str):
-    """Converts WAV to requested format using ffmpeg."""
     if fmt == "wav":
         shutil.copy(input_path, output_path)
         return
     
     cmd = ["ffmpeg", "-y", "-i", input_path]
-    if fmt == "mp3":
-        cmd.extend(["-codec:a", "libmp3lame", "-qscale:a", "2"])
-    elif fmt == "opus":
-        cmd.extend(["-codec:a", "libopus", "-b:a", "64k"])
-    elif fmt == "flac":
-        cmd.extend(["-codec:a", "flac"])
-    
+    if fmt == "mp3": cmd.extend(["-codec:a", "libmp3lame", "-qscale:a", "2"])
+    elif fmt == "opus": cmd.extend(["-codec:a", "libopus", "-b:a", "64k"])
+    elif fmt == "flac": cmd.extend(["-codec:a", "flac"])
     cmd.append(output_path)
-    subprocess.run(cmd, capture_output=True, check=True)
+    
+    # In DEBUG mode, we want to see ffmpeg issues
+    subprocess.run(cmd, capture_output=(not DEBUG), check=True)
 
 def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
-    if DEBUG: print(f"--- MAIN LANE: Using hot worker (GPU) ---")
+    if DEBUG: print(f"--- MAIN LANE: Using hot worker (GPU) ---", flush=True)
     tts_hot_worker.tts_to_file(
         text=text,
         speaker_wav=speaker_wav,
@@ -194,10 +186,7 @@ def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, outpu
     )
 
 async def run_tts_cold_lane_async(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
-    """
-    CHILD LANE: Async subprocess execution to bypass GIL and prevent deadlocks.
-    """
-    if DEBUG: print(f"--- CHILD LANE: Spawning new cold worker... ---")
+    if DEBUG: print(f"--- CHILD LANE: Spawning new cold worker... ---", flush=True)
     sub_env = os.environ.copy()
     sub_env["COQUI_TOS_AGREED"] = "1"
     sub_env["TTS_HOME"] = MODEL_CACHE_DIR
@@ -213,21 +202,23 @@ async def run_tts_cold_lane_async(text: str, lang: str, speaker_wav: str, speed:
         "--use_cuda", "yes"
     ]
     
-    if DEBUG: print(f"DEBUG EXEC: {' '.join(cmd)}")
+    if DEBUG: print(f"DEBUG EXEC: {' '.join(cmd)}", flush=True)
     
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=sub_env
-    )
-    
-    # Wait for process to finish and consume pipes to prevent buffer deadlock
-    stdout, stderr = await process.communicate()
+    # To fix DEBUG visibility: If DEBUG is true, don't capture. Let it flow to terminal.
+    if DEBUG:
+        process = await asyncio.create_subprocess_exec(*cmd, env=sub_env)
+        await process.wait()
+    else:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=sub_env
+        )
+        await process.communicate()
     
     if process.returncode != 0:
-        if DEBUG: print(f"[!] SUBPROCESS ERROR: {stderr.decode()}")
-        raise Exception("Cold worker subprocess failed.")
+        raise Exception(f"Cold worker subprocess failed (code {process.returncode})")
 
 # -------------------------------
 # 5. Endpoint: POST /v1/audio/speech
@@ -235,15 +226,12 @@ async def run_tts_cold_lane_async(text: str, lang: str, speaker_wav: str, speed:
 
 @app.post("/v1/audio/speech")
 async def create_speech(request: Request, background_tasks: BackgroundTasks):
-    # Determine if input is JSON or Form
     content_type = request.headers.get("Content-Type", "")
-    
     if "application/json" in content_type:
         data = await request.json()
         req = SpeechRequest(**data)
         custom_wav_path = None
     else:
-        # Legacy/Advanced Form support
         form_data = await request.form()
         req = SpeechRequest(
             input=form_data.get("input"),
@@ -251,7 +239,6 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             response_format=form_data.get("response_format", "mp3"),
             speed=float(form_data.get("speed", 1.0))
         )
-        # Check for dynamic cloning file
         custom_file = form_data.get("custom_voice_file")
         if custom_file and isinstance(custom_file, UploadFile):
             temp_custom = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -261,7 +248,6 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         else:
             custom_wav_path = None
 
-    # Resolve speaker WAV
     if custom_wav_path:
         speaker_wav = custom_wav_path
         voice_id = hashlib.md5(custom_wav_path.encode()).hexdigest()
@@ -270,39 +256,33 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         speaker_wav = os.path.join(VOICE_ASSET_DIR, v_file)
         voice_id = req.voice.lower()
         if not os.path.exists(speaker_wav):
-            if DEBUG: print(f"[!] Voice file not found: {speaker_wav}. Falling back to alloy.")
+            if DEBUG: print(f"[!] Voice file not found: {speaker_wav}. Falling back to alloy.", flush=True)
             speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
 
-    # Language Detection (Default to 'es')
     lang = "es"
-
-    # Cache Check
     cache_key = hashlib.md5(f"{req.input}{voice_id}{req.speed}{req.response_format}".encode()).hexdigest()
     final_output_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.{req.response_format}")
     
     if os.path.exists(final_output_path):
-        if DEBUG: print(f"--- ROUTER: Cache hit for {cache_key} ---")
+        if DEBUG: print(f"--- ROUTER: Cache hit for {cache_key} ---", flush=True)
         return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
 
-    # Generation
     temp_wav = os.path.join(tempfile.gettempdir(), f"tts_{uuid.uuid4()}.wav")
-    
     try:
         if tts_hot_worker and model_lock.acquire(blocking=False):
-            if DEBUG: print("--- ROUTER: Fast lane is free. Sending request. ---")
+            if DEBUG: print("--- ROUTER: Fast lane is free. Sending request. ---", flush=True)
             try:
                 await asyncio.to_thread(run_tts_hot_lane, req.input, lang, speaker_wav, req.speed, temp_wav)
             finally:
                 model_lock.release()
         else:
-            if DEBUG: print("--- ROUTER: Main lane is busy. Rerouting to child lane. ---")
-            # Using the ASYNC version of the cold lane from the reference architecture
+            if DEBUG: print("--- ROUTER: Main lane is busy. Rerouting to child lane. ---", flush=True)
             await run_tts_child_lane_async(req.input, lang, speaker_wav, req.speed, temp_wav)
         
-        # Convert to requested format
         convert_audio(temp_wav, final_output_path, req.response_format)
         
     except Exception as e:
+        if DEBUG: print(f"[!] ERROR in create_speech: {str(e)}", flush=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if os.path.exists(temp_wav): os.remove(temp_wav)
