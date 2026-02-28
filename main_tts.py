@@ -4,15 +4,14 @@
 # Coqui TTS Server (Hybrid Model)
 #
 # Package: coqui-tts-server
-# Version: 1.3.8
+# Version: 1.0.2
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with GPU acceleration, concurrency, and OpenAI API compliance.
 #
 # CHANGELOG:
-# - 1.3.9 (2026-02-28): Eliminated sudo dependencies. Implemented local 'assets' directory for processing. Documented system group requirements (video/render).
-# - 1.3.8 (2026-02-27): Consolidated security/network docs. Standard voices included in automated setup.
-# - 1.3.7 (2026-02-27): Reverted to direct Uvicorn execution. Localhost by default.
-# - 1.3.6 (2026-02-27): Fixed vocal provisioning documentation (Standard vs Elite).
+# - 1.0.2 (2026-02-28): Eliminated sudo dependencies. Implemented local 'assets' directory for processing. Documented system group requirements (video/render).
+# - 1.0.1 (2026-02-28): Automated Hotfix in setup.sh and requirement updates.
+# - 1.0.0 (2026-02-27): Initial stable production release.
 
 import os
 import uuid
