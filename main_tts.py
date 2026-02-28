@@ -5,7 +5,7 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.1.1
+# Version: 1.1.2
 # Maintainer: Uttera, Hugo L. Espuny
 #
 # This program is free software; you can redistribute it and/or modify
@@ -36,7 +36,7 @@
 #
 # * CHILD LANE (Cold Worker):
 #   If the 'model_lock' is busy, the request is rerouted to the
-#   'run_tts_child_lane' function.
+#   'run_tts_child_lane_async' function.
 #
 # * Concurrency Solution (GIL Bypass):
 #   The CHILD LANE is an 'async' function that uses
@@ -155,7 +155,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.1.1")
+app = FastAPI(title="Coqui TTS Server", version="1.1.2")
 
 # -------------------------------
 # 4. Core Logic: The Two Lanes
@@ -172,7 +172,6 @@ def convert_audio(input_path: str, output_path: str, fmt: str):
     elif fmt == "flac": cmd.extend(["-codec:a", "flac"])
     cmd.append(output_path)
     
-    # In DEBUG mode, we want to see ffmpeg issues
     subprocess.run(cmd, capture_output=(not DEBUG), check=True)
 
 def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
@@ -185,7 +184,7 @@ def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, outpu
         speed=speed
     )
 
-async def run_tts_cold_lane_async(text: str, lang: str, speaker_wav: str, speed: float, output_path: str):
+async def run_tts_child_lane_async(text: str, lang: str, speaker_wav_path: str, speed: float, output_path: str):
     if DEBUG: print(f"--- CHILD LANE: Spawning new cold worker... ---", flush=True)
     sub_env = os.environ.copy()
     sub_env["COQUI_TOS_AGREED"] = "1"
@@ -195,7 +194,7 @@ async def run_tts_cold_lane_async(text: str, lang: str, speaker_wav: str, speed:
         VENV_PYTHON, TTS_SCRIPT,
         "--text", text,
         "--model_name", MODEL_NAME,
-        "--speaker_wav", speaker_wav,
+        "--speaker_wav", speaker_wav_path,
         "--language_idx", lang,
         "--out_path", output_path,
         "--progress_bar", "False",
@@ -204,7 +203,6 @@ async def run_tts_cold_lane_async(text: str, lang: str, speaker_wav: str, speed:
     
     if DEBUG: print(f"DEBUG EXEC: {' '.join(cmd)}", flush=True)
     
-    # To fix DEBUG visibility: If DEBUG is true, don't capture. Let it flow to terminal.
     if DEBUG:
         process = await asyncio.create_subprocess_exec(*cmd, env=sub_env)
         await process.wait()
