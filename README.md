@@ -32,15 +32,15 @@ chmod +x setup.sh
 ```
 
 ### 2. User Permissions & Hardware Acceleration
-Para correr el servidor sin privilegios de `sudo` y habilitar la aceleración por GPU, el usuario debe pertenecer a los grupos `video` y `render`:
+To run the server without `sudo` privileges and enable GPU acceleration, the user must belong to the `video` and `render` groups:
 ```bash
 sudo usermod -aG video $USER
 sudo usermod -aG render $USER
 ```
-*Nota: Reinicie la sesión para que los cambios surtan efecto.*
+*Note: Restart your session for changes to take effect.*
 
 ### 3. Network Permissions
-El servidor escucha en el puerto `5100` por defecto. Asegúrese de que el usuario tiene permisos para abrir sockets en este puerto (común en puertos >1024).
+The server listens on port `5100` by default. Ensure the user has permissions to open sockets on this port (standard for ports >1024).
 
 ### 4. Vocal Provisioning
 - **Standard Voices**: The server automatically provisions the 6 standard OpenAI identities (Alloy, Echo, Fable, Onyx, Nova, Shimmer) during setup.

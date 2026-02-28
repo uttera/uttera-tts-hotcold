@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.9] - 2026-02-28
+
+### Added
+- Local `assets/` directory within the project folder for standardizing temporary and processed file storage.
+- Documentation for `video` and `render` system groups to enable GPU acceleration without `sudo`.
+- Network permission guidelines for binding to port `5100`.
+
+### Changed
+- Refactored `main_tts.py` to eliminate all `sudo` requirements, ensuring user-friendly operation.
+- Updated `README.md` to be fully in English, including installation and hardware acceleration steps.
+- Updated `setup.sh` with a dynamic path resolver for the `transformers` compatibility patch.
+
 ## [1.0.1] - 2026-02-28
 
 ### Added
