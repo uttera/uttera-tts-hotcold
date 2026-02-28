@@ -5,34 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-02-28
+
+### Fixed
+- Corrected CLI flags in Child Lane (`--no-progress_bar` and `--use_cuda`) for compatibility with local `tts` binary, resolving "unrecognized arguments" errors.
+
+## [1.1.2] - 2026-02-28
+
+### Fixed
+- Resolved function name mismatch in `create_speech` router (`run_tts_child_lane` vs `run_tts_child_lane_async`).
+
+## [1.1.1] - 2026-02-28
+
+### Added
+- Restored `DEBUG` mode verbosity by disabling subprocess output capture and forcing `flush=True` on all prints.
+- Detailed error reporting for FFmpeg and Subprocess failures.
+
+## [1.1.0] - 2026-02-28
+
+### Added
+- Full architectural restoration from production `v123` reference (Sphinx node).
+- Implementation of `asyncio.create_subprocess_exec` with pipe consumption to bypass GIL and prevent buffer deadlocks.
+- Support for Stark Elite voice gallery (a character, a voice, a character, etc.) and Spanish by default.
+- Modernized `requirements.txt` and `setup.sh` with hotfixes for Python 3.14 stability.
+
 ## [1.0.6] - 2026-02-28
 
 ### Added
-- Consolidated architecture headers and GNU GPL v3 license from reference implementation in `/mnt/host-sharedir/`.
+- Consolidated architecture headers and GNU GPL v3 license from reference implementation.
 - Detailed description of the hybrid concurrency model (Hot/Cold workers).
 
-## [1.0.5] - 2026-02-28
+## [1.0.3] - 2026-02-28
 
 ### Added
-- Automated Hotfix in `setup.sh` to resolve `isin_mps_friendly` import error in Coqui-TTS/Transformers.
-- Support for `torchcodec` via `coqui-tts[codec]` extra (required for Pytorch 2.9+).
-
-### Changed
-- Modernized `requirements.txt` to prevent massive backtracking and version conflicts.
-- Updated minimum version of `transformers` and `pydantic` for better environment stability.
+- Complete No-Sudo installation workflow.
+- Local directory structure within the project folder for `assets/` (models, voices, cache).
+- Prerequisites section in README for `espeak-ng`, `curl`, and `file`.
 
 ## [1.0.0] - 2026-02-27
 
 ### Added
 - Initial stable production release.
 - End-to-end voice cloning pipeline documentation.
-- Integrated SoX denoising workflow for high-fidelity audio samples.
-- Support for automated sample rate conversion.
 - Support for character voice engineering and specialized synthesis.
-
-### Changed
-- Improved PyPI compatibility by renaming package dependencies.
-- Updated documentation for local-only private inference.
-
-### Fixed
-- Various minor bugs in the FastAPI/Uvicorn interface.
