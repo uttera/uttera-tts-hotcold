@@ -9,6 +9,7 @@
 # Description: High-performance TTS server with GPU acceleration, concurrency, and OpenAI API compliance.
 #
 # CHANGELOG:
+# - 1.3.9 (2026-02-28): Eliminated sudo dependencies. Implemented local 'assets' directory for processing. Documented system group requirements (video/render).
 # - 1.3.8 (2026-02-27): Consolidated security/network docs. Standard voices included in automated setup.
 # - 1.3.7 (2026-02-27): Reverted to direct Uvicorn execution. Localhost by default.
 # - 1.3.6 (2026-02-27): Fixed vocal provisioning documentation (Standard vs Elite).
@@ -37,6 +38,10 @@ import torch
 # -------------------------------
 # 1. Configuration & Paths
 # -------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+os.makedirs(ASSETS_DIR, exist_ok=True)
+
 VENV_PYTHON = "/usr/local/lib/coqui/venv/bin/python"
 TTS_SCRIPT = "/usr/local/lib/coqui/venv/bin/tts"
 DEFAULT_MODEL = "tts_models/multilingual/multi-dataset/xtts_v2"

@@ -31,7 +31,18 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-### 2. Vocal Provisioning
+### 2. User Permissions & Hardware Acceleration
+Para correr el servidor sin privilegios de `sudo` y habilitar la aceleración por GPU, el usuario debe pertenecer a los grupos `video` y `render`:
+```bash
+sudo usermod -aG video $USER
+sudo usermod -aG render $USER
+```
+*Nota: Reinicie la sesión para que los cambios surtan efecto.*
+
+### 3. Network Permissions
+El servidor escucha en el puerto `5100` por defecto. Asegúrese de que el usuario tiene permisos para abrir sockets en este puerto (común en puertos >1024).
+
+### 4. Vocal Provisioning
 - **Standard Voices**: The server automatically provisions the 6 standard OpenAI identities (Alloy, Echo, Fable, Onyx, Nova, Shimmer) during setup.
 - **Elite/Custom Voices**: Reference voice files (.wav) for custom cloning are **not provided** due to copyright. Place your samples in `/opt/ai/assets/voices/elite/`.
 - Refer to [CLONE_VOICES.md](./CLONE_VOICES.md) for instructions on creating high-quality reference files.
