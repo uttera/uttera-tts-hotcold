@@ -5,18 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.3] - 2026-02-28
+## [1.0.4] - 2026-02-28
 
 ### Added
-- Complete No-Sudo installation workflow.
-- Pre-requisites section in `README.md` for `espeak-ng`, `curl`, and `file`.
-- Automated local directory structure within the project folder for `models`, `voices`, and `cache`.
+- Stable CDN source (`cdn.openai.com`) for standard voice samples to prevent HTML download errors.
+- Support for 2 additional AI models: `vctk/vits` and `your_tts` in the provisioning pipeline.
 
-### Changed
-- Refactored `setup_assets.sh` to remove `sudo apt` calls and redirect all storage to the local `assets/` directory.
-- Updated `main_tts.py` default storage paths to align with the local project structure.
+### Fixed
+- Fixed model download path redirect in `setup_assets.sh` by overriding `HOME` during provisioning.
+- Corrected voice sample validation logic to specifically check for `audio/` MIME types.
 
-## [1.0.2] - 2026-02-28
+## [1.0.3] - 2026-02-28
 
 ### Added
 - Automated Hotfix in `setup.sh` to resolve `isin_mps_friendly` import error in Coqui-TTS/Transformers.

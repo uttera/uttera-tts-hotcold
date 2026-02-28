@@ -1,6 +1,6 @@
 #!/bin/bash
 # Uttera TTS Asset Provisioning Script
-# Version: 1.2.0 (No-Sudo, Local Assets)
+# Version: 1.2.1 (No-Sudo, Stable Assets)
 # Description: Provisions models and standard voices into the local 'assets' directory.
 
 set -e
@@ -24,10 +24,12 @@ mkdir -p "$CACHE_DIR"
 # 3. Environment Variables (Directing Coqui to local assets)
 export TTS_HOME="$MODELS_DIR"
 export COQUI_TOS_AGREED=1
-VOICE_BASE_URL="https://github.com/matatonic/openedai-speech/raw/v0.17.0/voice_samples"
+
+# Source for Standard OpenAI voices (Public CDN)
+VOICE_BASE_URL="https://cdn.openai.com/API/docs/audio"
 
 # 4. Standard Voices Provisioning
-echo "[*] Provisioning Standard Voice Gallery into $VOICES_DIR/standard..."
+echo "[*] Provisioning Standard Voice Gallery (OpenAI Samples)..."
 voices=("alloy" "echo" "fable" "onyx" "nova" "shimmer")
 for voice in "${voices[@]}"; do
     TARGET_FILE="$VOICES_DIR/standard/$voice.wav"
@@ -36,11 +38,11 @@ for voice in "${voices[@]}"; do
         echo "    -> Downloading $voice.wav..."
         curl -L -s -o "$TARGET_FILE" "$VOICE_BASE_URL/$voice.wav"
         
-        # Quick validation
+        # Validation
         if [ -f "$TARGET_FILE" ]; then
             MIME=$(file --mime-type -b "$TARGET_FILE")
-            if [[ "$MIME" == *"text/html"* ]]; then
-                echo "    [!] ERROR: Downloaded HTML instead of WAV for $voice.wav. Removing..."
+            if [[ "$MIME" != *"audio/"* ]]; then
+                echo "    [!] ERROR: Invalid file type ($MIME) for $voice.wav. Removing..."
                 rm "$TARGET_FILE"
             else
                 echo "    [✓] $voice.wav validated ($MIME)."
@@ -60,11 +62,14 @@ fi
 echo "[*] Provisioning AI Models into $MODELS_DIR..."
 provision_model() {
     echo "    -> Checking model: $1"
-    $TTS_BIN --model_name "$1" --list_language_idxs > /dev/null 2>&1 || true
+    # Redirecting HOME to MODELS_DIR ensures downloads go to the local assets folder
+    HOME="$MODELS_DIR" $TTS_BIN --model_name "$1" --list_language_idxs > /dev/null 2>&1 || true
 }
 
 provision_model "tts_models/multilingual/multi-dataset/xtts_v2"
 provision_model "tts_models/en/ljspeech/vits"
+provision_model "tts_models/en/vctk/vits"
 provision_model "tts_models/es/css10/vits"
+provision_model "tts_models/multilingual/multi-dataset/your_tts"
 
 echo "✅ Local Asset Provisioning Complete."
