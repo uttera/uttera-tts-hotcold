@@ -5,7 +5,7 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.1.3
+# Version: 1.1.4
 # Maintainer: Uttera, Hugo L. Espuny
 #
 # This program is free software; you can redistribute it and/or modify
@@ -110,6 +110,7 @@ VOICE_MAP = {
     "onyx": "standard/onyx.wav",
     "nova": "standard/nova.wav",
     "shimmer": "standard/shimmer.wav",
+    
     "narrator": "elite/redacted-voice.wav",
     "voice-b": "elite/redacted-voice.wav",
     "voice-c": "elite/redacted-voice.wav",
@@ -155,7 +156,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.1.3")
+app = FastAPI(title="Coqui TTS Server", version="1.1.4")
 
 # -------------------------------
 # 4. Core Logic: The Two Lanes
@@ -190,7 +191,6 @@ async def run_tts_child_lane_async(text: str, lang: str, speaker_wav_path: str, 
     sub_env["COQUI_TOS_AGREED"] = "1"
     sub_env["TTS_HOME"] = MODEL_CACHE_DIR
     
-    # Adjusted CLI flags for local tts binary compatibility
     cmd = [
         VENV_PYTHON, TTS_SCRIPT,
         "--text", text,
