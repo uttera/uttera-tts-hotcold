@@ -4,11 +4,12 @@
 # Coqui TTS Server (Hybrid Model)
 #
 # Package: coqui-tts-server
-# Version: 1.0.2
+# Version: 1.0.3
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with GPU acceleration, concurrency, and OpenAI API compliance.
 #
 # CHANGELOG:
+# - 1.0.3 (2026-02-28): Complete No-Sudo installation and local 'assets' path standardization.
 # - 1.0.2 (2026-02-28): Eliminated sudo dependencies. Implemented local 'assets' directory for processing. Documented system group requirements (video/render).
 # - 1.0.1 (2026-02-28): Automated Hotfix in setup.sh and requirement updates.
 # - 1.0.0 (2026-02-27): Initial stable production release.
@@ -46,12 +47,18 @@ TTS_SCRIPT = "/usr/local/lib/coqui/venv/bin/tts"
 DEFAULT_MODEL = "tts_models/multilingual/multi-dataset/xtts_v2"
 
 # Storage Paths
-AUDIO_CACHE_DIR = os.environ.get("AUDIO_CACHE_DIR", "/opt/ai/cache/coqui-tts-audio")
-MODEL_CACHE_DIR = os.environ.get("TTS_HOME", "/opt/ai/models/speech/coqui-tts")
-VOICE_ASSET_DIR = os.environ.get("VOICE_ASSET_DIR", "/opt/ai/assets/voices")
+AUDIO_CACHE_DIR = os.path.join(ASSETS_DIR, "cache")
+MODEL_CACHE_DIR = os.path.join(ASSETS_DIR, "models")
+VOICE_ASSET_DIR = os.path.join(ASSETS_DIR, "voices")
 
 os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
 os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
+os.makedirs(VOICE_ASSET_DIR, exist_ok=True)
+
+# Override from Environment if provided
+AUDIO_CACHE_DIR = os.environ.get("AUDIO_CACHE_DIR", AUDIO_CACHE_DIR)
+MODEL_CACHE_DIR = os.environ.get("TTS_HOME", MODEL_CACHE_DIR)
+VOICE_ASSET_DIR = os.environ.get("VOICE_ASSET_DIR", VOICE_ASSET_DIR)
 
 DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
 

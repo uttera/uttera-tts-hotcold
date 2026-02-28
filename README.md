@@ -23,7 +23,13 @@ This server uses **Coqui TTS**, which is released under various licenses dependi
 
 ## 📦 Installation & Setup
 
-### 1. Unified Installation
+### 1. Prerequisites (Debian/Ubuntu)
+Install the following system dependencies first:
+```bash
+sudo apt update && sudo apt install -y espeak-ng curl file ffmpeg
+```
+
+### 2. Unified Installation
 ```bash
 git clone https://github.com/fakehec/coqui-tts-local-server.git
 cd coqui-tts-local-server
@@ -31,7 +37,7 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-### 2. User Permissions & Hardware Acceleration
+### 3. User Permissions & Hardware Acceleration
 To run the server without `sudo` privileges and enable GPU acceleration, the user must belong to the `video` and `render` groups:
 ```bash
 sudo usermod -aG video $USER

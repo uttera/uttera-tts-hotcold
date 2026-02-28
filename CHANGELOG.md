@@ -5,19 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.2] - 2026-02-28
+## [1.0.3] - 2026-02-28
 
 ### Added
-- Local `assets/` directory within the project folder for standardizing temporary and processed file storage.
-- Documentation for `video` and `render` system groups to enable GPU acceleration without `sudo`.
-- Network permission guidelines for binding to port `5100`.
+- Complete No-Sudo installation workflow.
+- Pre-requisites section in `README.md` for `espeak-ng`, `curl`, and `file`.
+- Automated local directory structure within the project folder for `models`, `voices`, and `cache`.
 
 ### Changed
-- Refactored `main_tts.py` to eliminate all `sudo` requirements, ensuring user-friendly operation.
-- Updated `README.md` to be fully in English, including installation and hardware acceleration steps.
-- Updated `setup.sh` with a dynamic path resolver for the `transformers` compatibility patch.
+- Refactored `setup_assets.sh` to remove `sudo apt` calls and redirect all storage to the local `assets/` directory.
+- Updated `main_tts.py` default storage paths to align with the local project structure.
 
-## [1.0.1] - 2026-02-28
+## [1.0.2] - 2026-02-28
 
 ### Added
 - Automated Hotfix in `setup.sh` to resolve `isin_mps_friendly` import error in Coqui-TTS/Transformers.
