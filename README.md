@@ -36,6 +36,11 @@ chmod +x setup.sh
 - **Elite/Custom Voices**: Reference voice files (.wav) for custom cloning are **not provided** due to copyright. Place your samples in `/opt/ai/assets/voices/elite/`.
 - Refer to [CLONE_VOICES.md](./CLONE_VOICES.md) for instructions on creating high-quality reference files.
 
+## 🔧 Troubleshooting
+
+### Transformers Compatibility Error
+The current version of Coqui-TTS (0.27.5) has a known bug with recent `transformers` versions regarding the `isin_mps_friendly` import. The `setup.sh` script automatically patches this in your virtual environment. If you install manually, ensure you replace that import with `torch.isin`.
+
 ## 🛠 Execution
 
 The server uses direct **Uvicorn** execution for maximum ASGI performance.

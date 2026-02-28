@@ -1,8 +1,9 @@
-coqui-tts
-torch
-torchaudio
-transformers<=4.35.0
+coqui-tts[codec]>=0.27.5
+torch>=2.1.0
+torchaudio>=2.1.0
+transformers>=4.40.0
 fastapi
 uvicorn
-pydantic<2.0
+pydantic>=2.0
 python-multipart
+sentencepiece
