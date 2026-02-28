@@ -4,11 +4,18 @@
 # Coqui TTS Server (Hybrid Model)
 #
 # Package: coqui-tts-server
-# Version: 1.0.4
+# Version: 1.0.5
+# License: GNU GPL v3
 # Maintainer: Uttera, Hugo L. Espuny
-# Description: High-performance TTS server with GPU acceleration, concurrency, and OpenAI API compliance.
+#
+# Description:
+# High-performance TTS server with GPU acceleration and OpenAI API compliance.
+# Implements a hybrid concurrency model:
+# - Hot Lane: Primary resident model in VRAM for zero-latency inference.
+# - Cold Lane: Dynamic subprocess workers for handling concurrent requests.
 #
 # CHANGELOG:
+# - 1.0.5 (2026-02-28): Restored full Debian/Ubuntu style header and GPL license.
 # - 1.0.4 (2026-02-28): Fixed standard voice sources and restored all 5 provisioned models.
 # - 1.0.3 (2026-02-28): Complete No-Sudo installation and local 'assets' path standardization.
 # - 1.0.1 (2026-02-28): Automated Hotfix in setup.sh and requirement updates.
@@ -112,7 +119,7 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
 
-app = FastAPI(title="Coqui TTS Server", version="1.3.8")
+app = FastAPI(title="Coqui TTS Server", version="1.0.5")
 
 @app.on_event("startup")
 async def startup_event():

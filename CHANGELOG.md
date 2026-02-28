@@ -5,17 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.4] - 2026-02-28
+## [1.0.5] - 2026-02-28
 
 ### Added
-- Stable CDN source (`cdn.openai.com`) for standard voice samples to prevent HTML download errors.
-- Support for 2 additional AI models: `vctk/vits` and `your_tts` in the provisioning pipeline.
+- Restored full Debian/Ubuntu style header in `main_tts.py` including license and architecture description.
+- Explicit GNU GPL v3 license declaration.
 
-### Fixed
-- Fixed model download path redirect in `setup_assets.sh` by overriding `HOME` during provisioning.
-- Corrected voice sample validation logic to specifically check for `audio/` MIME types.
-
-## [1.0.3] - 2026-02-28
+## [1.0.4] - 2026-02-28
 
 ### Added
 - Automated Hotfix in `setup.sh` to resolve `isin_mps_friendly` import error in Coqui-TTS/Transformers.
