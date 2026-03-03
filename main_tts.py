@@ -110,8 +110,7 @@ def find_venv_path(rel_path):
     return local # Fallback to local if not found anywhere
 
 VENV_PYTHON = os.environ.get("VENV_PYTHON", find_venv_path("venv/bin/python"))
-TTS_SCRIPT = os.environ.get("TTS_SCRIPT", find_venv_path("venv/bin/tts"))
-MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+MODEL_NAME = os.environ.get("TTS_MODEL", "tts_models/multilingual/multi-dataset/xtts_v2")
 
 # Storage Paths
 AUDIO_CACHE_DIR = os.path.join(ASSETS_DIR, "cache")
