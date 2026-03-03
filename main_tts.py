@@ -22,10 +22,13 @@
 # Package: coqui-tts-server
 # Version: 1.1.0
 # Maintainer: Uttera, Hugo L. Espuny
-# Description: High-performance TTS server with GPU acceleration, concurrency, and OpenAI API compliance.
+# Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
-# - 1.1.0 (2026-03-02): INJECTED: Personality parameters (temperature, repetition_penalty, top_k, top_p)
+# - 1.1.0 (2026-03-03): IMPLEMENTED: Full personality tuning (temp, top_p/k, penalties) with API parity.
+# - 1.1.0 (2026-03-03): REFACTORED: Cold Lane now uses Python API (python -c) to support personality tuning.
+# - 1.1.0 (2026-03-03): ENHANCED: Smart .env and venv detection (supports root and bin/ execution).
+# - 1.1.0 (2026-03-03): ADDED: Support for explicit 'language' parameter in requests.
 # - 1.0.3 (2026-02-27): Added OpenAI JSON support, Stark Elite voice gallery, and multi-format conversion.
 # - 1.0.2 (2026-02-27): Implemented hybrid Hot/Cold concurrency logic.
 # - 1.0.0 (2025-11-20): Initial release
@@ -37,21 +40,18 @@
 #
 # * MAIN LANE (Hot Worker):
 #   An XTTSv2 model is pre-loaded into VRAM on startup ('tts_hot_worker')
-#   and pre-heated with the default voice (voice-c).
-#   It is protected by a threading.Lock ('model_lock') to prevent race
-#   conditions, as the TTS object is not thread-safe.
-#   It runs in a separate thread via asyncio.to_thread().
+#   and pre-heated. Protected by 'model_lock' (threading.Lock).
 #
-# * CHILD LANE (Cold Worker):
-#   If the 'model_lock' is busy, the request is rerouted to the
-#   'run_tts_child_lane_async' function.
+# * CHILD LANE (Cold Worker / GIL Bypass):
+#   If the main lane is busy, the request is rerouted to an independent
+#   Python subprocess ('asyncio.create_subprocess_exec').
+#   This bypasses the Python Global Interpreter Lock (GIL), allowing
+#   multiple GPU-intensive syntheses to run in parallel.
 #
-# * Concurrency Solution (GIL Bypass):
-#   The CHILD LANE is an 'async' function that uses
-#   'await asyncio.create_subprocess_exec' to spawn a new
-#   'tts' process. This new process is not blocked by the main
-#   process's Global Interpreter Lock (GIL), allowing it to run in
-#   true parallel.
+# * API PARITY:
+#   The Child Lane executes a Python one-liner that uses the TTS.api directly.
+#   This ensures all personality parameters (temperature, penalties, etc.)
+#   behave exactly the same across all lanes, which the 'tts' CLI does not support.
 #
 # * Deadlock Fixes:
 #   1. (License): The 'COQUI_TOS_AGREED=1' env var is passed to the
