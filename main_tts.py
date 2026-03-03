@@ -72,6 +72,10 @@ import threading
 import warnings
 import sys
 from typing import Optional, List, Union
+from dotenv import load_dotenv
+
+# Load environment variables from .env if present
+load_dotenv()
 
 # Suppress noisy warnings
 warnings.filterwarnings('ignore', message=".*pkg_resources is deprecated.*")

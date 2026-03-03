@@ -8,3 +8,4 @@ pydantic>=2.0
 python-multipart
 sentencepiece
 torchcodec
+python-dotenv
