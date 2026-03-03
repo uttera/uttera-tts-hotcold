@@ -229,38 +229,48 @@ def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, outpu
         top_p=params.get("top_p", 0.85)
     )
 
-async def run_tts_child_lane_async(text: str, lang: str, speaker_wav_path: str, speed: float, output_path: str):
+async def run_tts_child_lane_async(text: str, lang: str, speaker_wav_path: str, speed: float, output_path: str, params: dict):
     if DEBUG: print(f"--- CHILD LANE: Spawning new cold worker... ---", flush=True)
     sub_env = os.environ.copy()
     sub_env["COQUI_TOS_AGREED"] = "1"
     sub_env["TTS_HOME"] = MODEL_CACHE_DIR
     
-    cmd = [
-        VENV_PYTHON, TTS_SCRIPT,
-        "--text", text,
-        "--model_name", MODEL_NAME,
-        "--speaker_wav", speaker_wav_path,
-        "--language_idx", lang,
-        "--out_path", output_path,
-        "--no-progress_bar",
-        "--use_cuda"
-    ]
+    # We use a python one-liner to maintain full API parity with the hot worker
+    # including personality parameters which the 'tts' CLI does not support.
+    python_code = f"""
+from TTS.api import TTS
+import os
+os.environ['COQUI_TOS_AGREED'] = '1'
+model_name = "{MODEL_NAME}"
+tts = TTS(model_name=model_name, progress_bar=False)
+tts.to("cuda")
+tts.tts_to_file(
+    text=\"\"\"{text}\"\"\",
+    speaker_wav="{speaker_wav_path}",
+    language="{lang}",
+    file_path="{output_path}",
+    speed={speed},
+    temperature={params.get("temperature", 0.75)},
+    length_penalty={params.get("length_penalty", 1.0)},
+    repetition_penalty={params.get("repetition_penalty", 5.0)},
+    top_k={params.get("top_k", 50)},
+    top_p={params.get("top_p", 0.85)}
+)
+"""
+    cmd = [VENV_PYTHON, "-c", python_code]
     
-    if DEBUG: print(f"DEBUG EXEC: {' '.join(cmd)}", flush=True)
+    if DEBUG: print(f"DEBUG EXEC: Subprocess starting for Cold Lane...", flush=True)
     
-    if DEBUG:
-        process = await asyncio.create_subprocess_exec(*cmd, env=sub_env)
-        await process.wait()
-    else:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=sub_env
-        )
-        await process.communicate()
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=sub_env
+    )
+    stdout, stderr = await process.communicate()
     
     if process.returncode != 0:
+        if DEBUG: print(f"[!] Cold worker failed: {stderr.decode()}", flush=True)
         raise Exception(f"Cold worker subprocess failed (code {process.returncode})")
 
 # -------------------------------
@@ -333,7 +343,7 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
                 model_lock.release()
         else:
             if DEBUG: print("--- ROUTER: Main lane is busy. Rerouting to child lane. ---", flush=True)
-            await run_tts_child_lane_async(req.input, lang, speaker_wav, req.speed, temp_wav)
+            await run_tts_child_lane_async(req.input, lang, speaker_wav, req.speed, temp_wav, params)
         
         convert_audio(temp_wav, final_output_path, req.response_format)
         
