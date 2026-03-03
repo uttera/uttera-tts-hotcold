@@ -1,5 +1,9 @@
 # coqui-tts-local-server
 
+<p align="center">
+  <img src="docs/img/social-preview.png" alt="Coqui TTS Local Server" width="800">
+</p>
+
 High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architecture. 
 
 **Ideal for locally running installations of agents like OpenClaw or Open-WebUI, where the media should not leave the private local domain.**
