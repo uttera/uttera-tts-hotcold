@@ -188,12 +188,12 @@ class SpeechRequest(BaseModel):
     voice: str = "alloy"
     response_format: str = "mp3"
     speed: float = 1.0
-    language: str = "en"
-    temperature: float = 0.75
-    length_penalty: float = 1.0
-    repetition_penalty: float = 5.0
-    top_k: int = 50
-    top_p: float = 0.85
+    language: str = os.environ.get("DEFAULT_LANGUAGE", "en")
+    temperature: float = float(os.environ.get("DEFAULT_TEMPERATURE", 0.75))
+    length_penalty: float = float(os.environ.get("DEFAULT_LENGTH_PENALTY", 1.0))
+    repetition_penalty: float = float(os.environ.get("DEFAULT_REPETITION_PENALTY", 5.0))
+    top_k: int = int(os.environ.get("DEFAULT_TOP_K", 50))
+    top_p: float = float(os.environ.get("DEFAULT_TOP_P", 0.85))
 
 app = FastAPI(title="Coqui TTS Server", version="1.1.4")
 
@@ -291,12 +291,12 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             voice=form_data.get("voice", "alloy"),
             response_format=form_data.get("response_format", "mp3"),
             speed=float(form_data.get("speed", 1.0)),
-            language=form_data.get("language", "en"),
-            temperature=float(form_data.get("temperature", 0.75)),
-            length_penalty=float(form_data.get("length_penalty", 1.0)),
-            repetition_penalty=float(form_data.get("repetition_penalty", 5.0)),
-            top_k=int(form_data.get("top_k", 50)),
-            top_p=float(form_data.get("top_p", 0.85))
+            language=form_data.get("language", os.environ.get("DEFAULT_LANGUAGE", "en")),
+            temperature=float(form_data.get("temperature", os.environ.get("DEFAULT_TEMPERATURE", 0.75))),
+            length_penalty=float(form_data.get("length_penalty", os.environ.get("DEFAULT_LENGTH_PENALTY", 1.0))),
+            repetition_penalty=float(form_data.get("repetition_penalty", os.environ.get("DEFAULT_REPETITION_PENALTY", 5.0))),
+            top_k=int(form_data.get("top_k", os.environ.get("DEFAULT_TOP_K", 50))),
+            top_p=float(form_data.get("top_p", os.environ.get("DEFAULT_TOP_P", 0.85)))
         )
         custom_file = form_data.get("custom_voice_file")
         if custom_file and isinstance(custom_file, UploadFile):
@@ -318,7 +318,7 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             if DEBUG: print(f"[!] Voice file not found: {speaker_wav}. Falling back to alloy.", flush=True)
             speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
 
-    lang = req.language or os.environ.get("DEFAULT_LANGUAGE", "en")
+    lang = req.language
     params = {
         "temperature": req.temperature,
         "length_penalty": req.length_penalty,
