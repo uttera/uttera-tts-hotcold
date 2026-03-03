@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# main_tts.py - Coqui TTS Hybrid-Worker Server
-# Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
-#
-# Package: coqui-tts-server
-# Version: 1.1.4
-# Maintainer: Uttera, Hugo L. Espuny
+# Coqui TTS Server (Hybrid Model)
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,6 +16,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, see <https://www.gnu.org/licenses/>.
 #
+# main_tts.py - Coqui TTS Hybrid-Worker Server
+# Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
+#
+# Package: coqui-tts-server
+# Version: 1.1.0
+# Maintainer: Uttera, Hugo L. Espuny
+# Description: High-performance TTS server with GPU acceleration, concurrency, and OpenAI API compliance.
+#
+# CHANGELOG:
+# - 1.1.0 (2026-03-02): INJECTED: Personality parameters (temperature, repetition_penalty, top_k, top_p)
+# - 1.0.3 (2026-02-27): Added OpenAI JSON support, Stark Elite voice gallery, and multi-format conversion.
+# - 1.0.2 (2026-02-27): Implemented hybrid Hot/Cold concurrency logic.
+# - 1.0.0 (2025-11-20): Initial release
 #
 # --- Architecture Summary ---
 #
@@ -112,12 +120,16 @@ VOICE_MAP = {
     "shimmer": "standard/shimmer.wav",
     
     "narrator": "elite/redacted-voice.wav",
+    "assistant1": "elite/narrator.wav",
+    "assistant2": "elite/assistant-1.wav",
     "voice-b": "elite/redacted-voice.wav",
     "voice-c": "elite/redacted-voice.wav",
+    "hal1": "elite/voice-c.wav",
     "voice-a": "elite/redacted-voice.wav",
     "voice-d": "elite/redacted.wav",
     "voice-e": "elite/redacted.wav",
     "voice-f": "elite/redacted.wav",
+    "tars1": "elite/voice-f-1.wav",
     "voice-g": "elite/redacted.wav",
     "voice-h": "elite/redacted.wav"
 }
