@@ -26,6 +26,7 @@
 #
 # CHANGELOG:
 # - 1.2.0 (2026-03-03): Added personality parameters, API parity for Cold Lane, and smart .env/venv detection.
+# - 1.2.0 (2026-03-03): CLEANUP: Removed TTS_SCRIPT (deprecated) and added TTS_MODEL env support.
 # - 1.1.4 (2026-02-28): Golden version release. Performance verified for Uttera nodes.
 # - 1.1.0 (2026-02-28): Restoration from Sphinx v123. Implemented Hot/Cold concurrency and GIL bypass.
 # - 1.0.3 (2026-02-28): No-Sudo workflow, local assets structure, and CLI prerequisites.
