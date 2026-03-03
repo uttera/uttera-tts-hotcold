@@ -25,8 +25,7 @@
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
-# - 1.2.0 (2026-03-03): Added personality parameters, API parity for Cold Lane, and smart .env/venv detection.
-# - 1.2.0 (2026-03-03): CLEANUP: Removed TTS_SCRIPT (deprecated) and added TTS_MODEL env support.
+# - 1.2.0 (2026-03-03): Added personality parameters, discovery endpoint, and API parity for Cold Lane.
 # - 1.1.4 (2026-02-28): Golden version release. Performance verified for Uttera nodes.
 # - 1.1.0 (2026-02-28): Restoration from Sphinx v123. Implemented Hot/Cold concurrency and GIL bypass.
 # - 1.0.3 (2026-02-28): No-Sudo workflow, local assets structure, and CLI prerequisites.
@@ -138,17 +137,13 @@ VOICE_MAP = {
     "nova": "standard/nova.wav",
     "shimmer": "standard/shimmer.wav",
     
-    "narrator": "elite/redacted-voice.wav",
-    "assistant1": "elite/narrator.wav",
-    "assistant2": "elite/assistant-1.wav",
+    "narrator": "elite/narrator.wav",
     "voice-b": "elite/redacted-voice.wav",
     "voice-c": "elite/redacted-voice.wav",
-    "hal1": "elite/voice-c.wav",
     "voice-a": "elite/redacted-voice.wav",
     "voice-d": "elite/redacted.wav",
     "voice-e": "elite/redacted.wav",
     "voice-f": "elite/redacted.wav",
-    "tars1": "elite/voice-f-1.wav",
     "voice-g": "elite/redacted.wav",
     "voice-h": "elite/redacted.wav"
 }
@@ -274,6 +269,11 @@ tts.tts_to_file(
 # -------------------------------
 # 5. Endpoint: POST /v1/audio/speech
 # -------------------------------
+
+@app.get("/v1/voices")
+async def list_voices():
+    """Returns a list of all available voice identifiers."""
+    return {"voices": sorted(list(VOICE_MAP.keys()))}
 
 @app.post("/v1/audio/speech")
 async def create_speech(request: Request, background_tasks: BackgroundTasks):
