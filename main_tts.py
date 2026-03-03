@@ -75,7 +75,15 @@ from typing import Optional, List, Union
 from dotenv import load_dotenv
 
 # Load environment variables from .env if present
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+env_paths = [
+    os.path.join(BASE_DIR, ".env"),
+    os.path.join(os.path.dirname(BASE_DIR), ".env")
+]
+for env_path in env_paths:
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        break
 
 # Suppress noisy warnings
 warnings.filterwarnings('ignore', message=".*pkg_resources is deprecated.*")
@@ -91,11 +99,20 @@ import torch
 # 1. Configuration & Paths
 # -------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(BASE_DIR)
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 os.makedirs(ASSETS_DIR, exist_ok=True)
 
-VENV_PYTHON = os.environ.get("VENV_PYTHON", os.path.join(BASE_DIR, "venv/bin/python"))
-TTS_SCRIPT = os.environ.get("TTS_SCRIPT", os.path.join(BASE_DIR, "venv/bin/tts"))
+# Helper to find venv paths (local first, then parent)
+def find_venv_path(rel_path):
+    local = os.path.join(BASE_DIR, rel_path)
+    parent = os.path.join(PARENT_DIR, rel_path)
+    if os.path.exists(local): return local
+    if os.path.exists(parent): return parent
+    return local # Fallback to local if not found anywhere
+
+VENV_PYTHON = os.environ.get("VENV_PYTHON", find_venv_path("venv/bin/python"))
+TTS_SCRIPT = os.environ.get("TTS_SCRIPT", find_venv_path("venv/bin/tts"))
 MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
 
 # Storage Paths
@@ -171,6 +188,7 @@ class SpeechRequest(BaseModel):
     voice: str = "alloy"
     response_format: str = "mp3"
     speed: float = 1.0
+    language: str = "en"
     temperature: float = 0.75
     length_penalty: float = 1.0
     repetition_penalty: float = 5.0
@@ -263,6 +281,7 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             voice=form_data.get("voice", "alloy"),
             response_format=form_data.get("response_format", "mp3"),
             speed=float(form_data.get("speed", 1.0)),
+            language=form_data.get("language", "en"),
             temperature=float(form_data.get("temperature", 0.75)),
             length_penalty=float(form_data.get("length_penalty", 1.0)),
             repetition_penalty=float(form_data.get("repetition_penalty", 5.0)),
@@ -289,7 +308,7 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             if DEBUG: print(f"[!] Voice file not found: {speaker_wav}. Falling back to alloy.", flush=True)
             speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
 
-    lang = "es"
+    lang = req.language or os.environ.get("DEFAULT_LANGUAGE", "en")
     params = {
         "temperature": req.temperature,
         "length_penalty": req.length_penalty,
