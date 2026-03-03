@@ -18,7 +18,8 @@ This server uses **Coqui TTS**, which is released under various licenses dependi
   - **Hot Worker:** Primary model resident in VRAM for sub-second (XTTSv2 ~1.0s) inference.
   - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy.
 - **OpenAI Compatible:** Native support for OpenAI parameters (`model`, `voice`, `speed`, `response_format`).
-- **Multilingual Excellence:** Native support for 16+ languages (English by default).
+- **Personality Tuning:** Full control over synthesis expressiveness via parameters like `temperature`, `top_p/k`, and `penalties`.
+- **Multilingual Excellence:** Native support for 16 languages: `en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja` (English by default).
 - **Intelligent Caching:** MD5-based caching for zero-latency repeated requests.
 
 ## 📦 Installation & Setup
@@ -53,6 +54,22 @@ The server listens on port `5100` by default. Ensure the user has permissions to
 - **Elite/Custom Voices**: Reference voice files (.wav) for custom cloning are **not provided** due to copyright. Place your samples in `/opt/ai/assets/voices/elite/`.
 - Refer to [CLONE_VOICES.md](./CLONE_VOICES.md) for instructions on creating high-quality reference files.
 
+## 🎭 Personality Tuning & Parameters
+
+The server supports advanced personality parameters to tune the output voice. These can be sent via the **API (JSON or Form-data)** or set as system-wide defaults via **environment variables** (or the `.env` file).
+
+| Parameter | Default | Description | Env Variable |
+| :--- | :--- | :--- | :--- |
+| `temperature` | **0.75** | Higher values increase expressiveness/randomness. | `DEFAULT_TEMPERATURE` |
+| `length_penalty`| **1.0** | Controls the length of the generated sequence. | `DEFAULT_LENGTH_PENALTY` |
+| `repetition_penalty`| **5.0** | Prevents the model from repeating words/phrases. | `DEFAULT_REPETITION_PENALTY`|
+| `top_k` | **50** | Limits sampling to the top K most likely tokens. | `DEFAULT_TOP_K` |
+| `top_p` | **0.85** | Nucleus sampling to ensure token diversity. | `DEFAULT_TOP_P` |
+| `language` | **en** | Default language code. | `DEFAULT_LANGUAGE` |
+
+### 🌐 Supported Languages
+The following language codes are supported: `en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja`.
+
 ## 🔧 Troubleshooting
 
 ### Transformers Compatibility Error
@@ -73,9 +90,16 @@ uvicorn main_tts:app --host 127.0.0.1 --port 5100
 uvicorn main_tts:app --host 0.0.0.0 --port 5100
 ```
 
-### ⚙️ Environment Variables
+### ⚙️ Environment Variables & .env
+
+The server includes a `.env.example` file. You can create a **`.env`** file in the root directory to override default behaviors without changing the code.
+
 - `TTS_MODEL`: Model name to pre-load into the Hot Worker (default: `xtts_v2`).
+- `DEFAULT_LANGUAGE`: Sets the default language if not specified in the request (default: `en`).
 - `DEBUG`: Set to `true` to enable worker routing traces.
+- `VENV_PYTHON`: Absolute path to the python executable in the venv (auto-detected if local).
+
+*Note: All personality parameters listed in the section above can also be set via their respective `DEFAULT_*` environment variables.*
 
 ### 3. System Service (systemd)
 1. Create: `/etc/systemd/system/coqui-tts.service`
