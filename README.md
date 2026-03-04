@@ -21,6 +21,7 @@ This server uses **Coqui TTS**, which is released under various licenses dependi
 - **Hybrid Concurrency:** 
   - **Hot Worker:** Primary model resident in VRAM for sub-second (XTTSv2 ~1.0s) inference.
   - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy.
+- **GPU Accelerated:** Native support for NVIDIA CUDA via `torch`, ensuring ultra-fast inference and high-quality synthesis.
 - **OpenAI Compatible:** Native support for OpenAI parameters (`model`, `voice`, `speed`, `response_format`).
 - **Personality Tuning:** Full control over synthesis expressiveness via parameters like `temperature`, `top_p/k`, and `penalties`.
 - **Multilingual Excellence:** Native support for 16 languages: `en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja` (English by default).
