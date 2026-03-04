@@ -56,7 +56,7 @@ The server listens on port `5100` by default. Ensure the user has permissions to
 
 ### 4. Vocal Provisioning
 - **Standard Voices**: The server automatically provisions the 6 standard OpenAI identities (Alloy, Echo, Fable, Onyx, Nova, Shimmer) during setup.
-- **Elite/Custom Voices**: Reference voice files (.wav) for custom cloning are **not provided** due to copyright. Place your samples in `/opt/ai/assets/voices/elite/`.
+- **Elite/Custom Voices**: Reference voice files (.wav) for custom cloning are **not provided** due to copyright. Place your samples in `assets/voices/elite/` within the project directory.
 - Refer to [CLONE_VOICES.md](./CLONE_VOICES.md) for instructions on creating high-quality reference files.
 
 ## 🎭 Personality Tuning & Parameters
