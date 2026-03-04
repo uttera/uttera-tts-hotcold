@@ -105,9 +105,10 @@ The server includes a `.env.example` file. You can create a **`.env`** file in t
 
 *Note: All personality parameters listed in the section above can also be set via their respective `DEFAULT_*` environment variables.*
 
-### 3. System Service (systemd)
-1. Create: `/etc/systemd/system/coqui-tts.service`
-2. Configuration:
+### 3. User Service (systemd --user)
+1. Create directory if it doesn't exist: `mkdir -p ~/.config/systemd/user`
+2. Create: `~/.config/systemd/user/coqui-tts.service`
+3. Configuration (all environment variables are loaded from your `.env` file):
 
 ```ini
 [Unit]
@@ -116,17 +117,19 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/usr/local/lib/coqui
-Environment="TTS_HOME=/opt/ai/models/speech/coqui-tts"
-Environment="VOICE_ASSET_DIR=/opt/ai/assets/voices"
-Environment="TTS_MODEL=tts_models/multilingual/multi-dataset/xtts_v2"
-ExecStart=/usr/local/lib/coqui/venv/bin/uvicorn main_tts:app --host 127.0.0.1 --port 5100
+WorkingDirectory=%h/coqui-tts-local-server
+ExecStart=%h/coqui-tts-local-server/venv/bin/uvicorn main_tts:app --host 127.0.0.1 --port 5100
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
+```
+
+4. Enable and start:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now coqui-tts.service
 ```
 
 ## 🔒 Security & Network Note
