@@ -15,7 +15,6 @@ source venv/bin/activate
 # 2. Pre-installation for Python 3.14 stability
 echo "[*] Installing build-time dependencies..."
 pip install --upgrade pip setuptools wheel
-pip install sentencepiece==0.2.0
 
 # 3. Core Dependencies
 echo "[*] Installing core dependencies from requirements.txt..."

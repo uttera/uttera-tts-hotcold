@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.6] - 2026-04-02
+
+### Fixed
+- **setup.sh hardcoded sentencepiece version:** Removed `pip install sentencepiece==0.2.0` from `setup.sh`. The package is already declared without a pin in `requirements.txt` and was being installed twice. The pinned version (`0.2.0`) had no prebuilt wheel for Python 3.14 and required a C/C++ compilation that could fail depending on the environment. pip now resolves the version from `requirements.txt` and picks a compatible prebuilt wheel.
+
 ## [1.4.5] - 2026-04-02
 
 ### Fixed

@@ -20,11 +20,12 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.4.5
+# Version: 1.4.6
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.4.6 (2026-04-02): Removed hardcoded sentencepiece==0.2.0 from setup.sh (no wheel for Python 3.14).
 # - 1.4.5 (2026-04-02): Moved transformers/isin_mps_friendly patch from setup.sh to a Python monkey-patch in main_tts.py. Survives venv upgrades.
 # - 1.4.4 (2026-04-02): ffmpeg errors no longer leak internal paths in HTTP 500 responses.
 # - 1.4.3 (2026-04-02): Exposed hot worker load error in GET /health via hot_worker_error field.
@@ -236,7 +237,7 @@ class SpeechRequest(BaseModel):
     top_k: int = int(os.environ.get("DEFAULT_TOP_K", 50))
     top_p: float = float(os.environ.get("DEFAULT_TOP_P", 0.85))
 
-app = FastAPI(title="Coqui TTS Server", version="1.4.5")
+app = FastAPI(title="Coqui TTS Server", version="1.4.6")
 
 # -------------------------------
 # 4. Core Logic: The Two Lanes
@@ -442,7 +443,7 @@ async def health_check():
     """
     return {
         "status": "ok",
-        "version": "1.4.5",
+        "version": "1.4.6",
         "model": MODEL_NAME,
         "hot_worker_loaded": tts_hot_worker is not None,
         "hot_worker_error": hot_worker_error
