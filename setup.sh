@@ -22,6 +22,9 @@ echo "[*] Installing core dependencies from requirements.txt..."
 pip install -r requirements.txt
 
 # 4. Patch transformers for 3.14 compatibility
+# NOTE (v1.4.5): This patch is now also applied as a Python monkey-patch in main_tts.py
+# (before the TTS import), making it resilient to venv upgrades. This shell patch
+# remains here as a belt-and-suspenders measure but is no longer the primary fix.
 echo "[*] Applying compatibility patches to transformers..."
 # Search for the file in the venv to ensure we hit the right path
 TARGET_FILE=$(find venv -name "pytorch_utils.py" | grep "transformers" | head -n 1)

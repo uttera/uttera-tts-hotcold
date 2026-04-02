@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.5] - 2026-04-02
+
+### Fixed
+- **transformers monkey-patch:** The `isin_mps_friendly` compatibility fix (required by Coqui 0.27.5) is now applied as a Python monkey-patch in `main_tts.py` before the `TTS` import, instead of relying solely on `setup.sh` appending to the installed venv file. The new approach survives `pip install --upgrade transformers` without breaking. The `setup.sh` patch is retained as a redundant fallback with an explanatory comment.
+
+## [1.4.4] - 2026-04-02
+
+### Fixed
+- **ffmpeg error information leak:** `subprocess.CalledProcessError` is now caught inside `convert_audio()` and re-raised as a generic `RuntimeError`. The client receives `"Audio conversion to <fmt> failed (ffmpeg exited <code>)"` instead of the full command string with internal temp file paths. Full error detail is still logged to stdout.
+
+## [1.4.3] - 2026-04-02
+
+### Fixed
+- **Degraded mode visibility:** If the hot worker fails to load at startup, the error message is now stored in `hot_worker_error` (global) and exposed in `GET /health` as `"hot_worker_error": "<reason>"`. Previously the server started silently in degraded mode with no observable signal beyond a console print. Operators and proxies can now detect this state by polling `/health`.
+
+## [1.4.2] - 2026-04-02
+
+### Fixed
+- **Cold Lane timeout:** `process.communicate()` now wrapped in `asyncio.wait_for()`. If the subprocess exceeds `COLD_LANE_TIMEOUT_SECONDS` (default: 120s, configurable via `.env`), the process is killed and the request fails with HTTP 500. Prevents hung subprocesses (OOM, driver crash) from blocking the server indefinitely.
+- **Cache race condition:** Two concurrent requests with the same cache key no longer both synthesize the same audio. A per-key `asyncio.Lock` (stored in module-level `_cache_locks` dict) serializes access to the cache-check + synthesis + write block. The second request waits for the lock, then finds the file already written and returns it from cache.
+
+## [1.4.1] - 2026-04-02
+
+### Security
+- **[CRITICAL] Cold Lane code injection fix:** The synthesis text passed to the Cold Lane subprocess was previously interpolated directly into a Python f-string (`text=\"\"\"{text}\"\"\"`). An input containing triple-quotes (`"""`) or escape sequences could break the string literal and inject arbitrary Python code executed by the subprocess. Text is now passed exclusively via the `TTS_INPUT_TEXT` environment variable and read inside the subprocess with `os.environ['TTS_INPUT_TEXT']`, completely isolating it from the generated code string.
+
+## [1.4.0] - 2026-04-02
+
+### Added
+- **Streaming TTS Endpoint:** New `POST /v1/audio/speech/stream` for real-time audio delivery via chunked WAV transfer.
+  - Uses XTTS-v2's `inference_stream()` on the Hot Lane only.
+  - Returns HTTP 503 if the hot worker is not loaded or is busy.
+  - A synchronous producer thread feeds PCM chunks into an `asyncio.Queue`, bridging the blocking model iterator with the async response generator without blocking the event loop.
+  - Output: WAV (PCM 16-bit, mono, 24000 Hz) with standard streaming header (`data_size=0xFFFFFFFF`).
+  - No caching — audio is generated and sent in real time.
+  - Accepts the same JSON / form-data fields as `POST /v1/audio/speech`.
+
+## [1.3.0] - 2026-04-02
+
+### Added
+- **Health Endpoint:** New `GET /health` endpoint returning server status, version, model name, and hot worker load state. Suitable for proxies, load balancers, and Docker healthchecks.
+- **Cache TTL Expiration:** Cache files are now expired based on `CACHE_TTL_MINUTES` env var (default: 10080 = 7 days). Set to `0` to disable expiration. Added to `.env.example`.
+
 ## [1.2.0] - 2026-03-03
 
 ### Added

@@ -20,11 +20,18 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.2.0
+# Version: 1.4.5
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.4.5 (2026-04-02): Moved transformers/isin_mps_friendly patch from setup.sh to a Python monkey-patch in main_tts.py. Survives venv upgrades.
+# - 1.4.4 (2026-04-02): ffmpeg errors no longer leak internal paths in HTTP 500 responses.
+# - 1.4.3 (2026-04-02): Exposed hot worker load error in GET /health via hot_worker_error field.
+# - 1.4.2 (2026-04-02): Fixed Cold Lane indefinite hang via asyncio.wait_for timeout (COLD_LANE_TIMEOUT_SECONDS). Fixed cache race condition via per-key asyncio.Lock.
+# - 1.4.1 (2026-04-02): SECURITY: Fixed code injection in Cold Lane. Text is now passed via env var TTS_INPUT_TEXT instead of f-string interpolation.
+# - 1.4.0 (2026-04-02): Added POST /v1/audio/speech/stream endpoint (Hot Lane only, WAV chunked).
+# - 1.3.0 (2026-04-02): Added GET /health endpoint. Added cache TTL expiration via CACHE_TTL_MINUTES env var.
 # - 1.2.0 (2026-03-03): Added personality parameters, discovery endpoint, and API parity for Cold Lane.
 # - 1.1.4 (2026-02-28): Golden version release. Performance verified for Uttera nodes.
 # - 1.1.0 (2026-02-28): Restoration from Sphinx v123. Implemented Hot/Cold concurrency and GIL bypass.
@@ -51,6 +58,14 @@
 #   This ensures all personality parameters (temperature, penalties, etc.)
 #   behave exactly the same across all lanes, which the 'tts' CLI does not support.
 #
+# * STREAM LANE (Hot Worker / inference_stream):
+#   POST /v1/audio/speech/stream uses XTTS-v2's inference_stream() to yield
+#   PCM audio chunks in real time via a WAV-framed StreamingResponse.
+#   Runs exclusively on the Hot Lane (model_lock). Returns HTTP 503 if busy.
+#   No caching — audio is generated and sent in real time.
+#   A sync producer thread feeds chunks into an asyncio.Queue to bridge
+#   the blocking model iterator with the async response generator.
+#
 # * Deadlock Fixes:
 #   1. (License): The 'COQUI_TOS_AGREED=1' env var is passed to the
 #      subprocess to prevent it from hanging on the [y/n] license prompt.
@@ -62,6 +77,7 @@ import os
 import time
 import uuid
 import shutil
+import struct
 import asyncio
 import hashlib
 import tempfile
@@ -87,6 +103,20 @@ for env_path in env_paths:
 warnings.filterwarnings('ignore', message=".*pkg_resources is deprecated.*")
 warnings.filterwarnings('ignore', message=".*_register_pytree_node` is deprecated.*")
 
+# Monkey-patch: inject isin_mps_friendly if missing from transformers.
+# Coqui XTTS-v2 (0.27.5) calls this function which is absent in some transformers versions.
+# This replaces the fragile append-to-venv-file patch previously applied by setup.sh,
+# making the fix version-upgrade-safe and repository-resident.
+# Must run before 'from TTS.api import TTS' triggers the transformers import chain.
+try:
+    from transformers.pytorch_utils import isin_mps_friendly  # noqa: F401 — just checking presence
+except ImportError:
+    import torch as _torch
+    import transformers.pytorch_utils as _tpu
+    def _isin_mps_friendly(elements, test_elements):
+        return _torch.isin(elements, test_elements)
+    _tpu.isin_mps_friendly = _isin_mps_friendly
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request, BackgroundTasks
 from pydantic import BaseModel
 from fastapi.responses import FileResponse, StreamingResponse
@@ -96,7 +126,6 @@ import torch
 # -------------------------------
 # 1. Configuration & Paths
 # -------------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.dirname(BASE_DIR)
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 os.makedirs(ASSETS_DIR, exist_ok=True)
@@ -128,6 +157,14 @@ VOICE_ASSET_DIR = os.environ.get("VOICE_ASSET_DIR", VOICE_ASSET_DIR)
 
 DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
 
+# Cache TTL: files older than this (in minutes) are treated as expired.
+# Default: 10080 minutes = 7 days. Set to 0 to disable expiration.
+CACHE_TTL_MINUTES = int(os.environ.get("CACHE_TTL_MINUTES", 10080))
+
+# Cold Lane timeout: max seconds to wait for a cold worker subprocess before killing it.
+# Default: 120s. Prevents hung subprocesses (OOM, driver crash) from blocking requests forever.
+COLD_LANE_TIMEOUT_SECONDS = int(os.environ.get("COLD_LANE_TIMEOUT_SECONDS", 120))
+
 # --- Voice Mapping: OpenAI Standards & Elite Gallery ---
 VOICE_MAP = {
     "alloy": "standard/alloy.wav",
@@ -153,21 +190,32 @@ VOICE_MAP = {
 # -------------------------------
 model_lock = threading.Lock()
 tts_hot_worker = None
+# Stores the error message if the hot worker fails to load. Exposed via /health.
+hot_worker_error = None
+
+# Per-cache-key asyncio locks. Prevents two concurrent requests with the same cache key
+# from both synthesizing the same audio. The second request waits for the lock, then
+# finds the file already written and returns it from cache without re-synthesizing.
+# Safe without a threading.Lock because asyncio runs in a single event loop thread;
+# dict.setdefault() is atomic within it.
+_cache_locks: dict = {}
 
 def load_hot_worker():
-    global tts_hot_worker
+    global tts_hot_worker, hot_worker_error
     if DEBUG: print(f"[*] Loading HOT WORKER model: {MODEL_NAME}", flush=True)
     try:
         torch.backends.cudnn.benchmark = True
         worker = TTS(model_name=MODEL_NAME, progress_bar=False)
         worker.to("cuda")
-        
+
         warmup_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
         if os.path.exists(warmup_wav):
             worker.tts("System online.", speaker_wav=warmup_wav, language="en")
             if DEBUG: print("[+] Hot worker warmed up and ready on GPU.", flush=True)
         tts_hot_worker = worker
     except Exception as e:
+        # Store the error so /health can expose degraded state to operators and proxies.
+        hot_worker_error = str(e)
         print(f"[!] CRITICAL ERROR: Failed to load hot worker: {e}", flush=True)
 
 load_hot_worker()
@@ -188,7 +236,7 @@ class SpeechRequest(BaseModel):
     top_k: int = int(os.environ.get("DEFAULT_TOP_K", 50))
     top_p: float = float(os.environ.get("DEFAULT_TOP_P", 0.85))
 
-app = FastAPI(title="Coqui TTS Server", version="1.2.0")
+app = FastAPI(title="Coqui TTS Server", version="1.4.5")
 
 # -------------------------------
 # 4. Core Logic: The Two Lanes
@@ -205,7 +253,13 @@ def convert_audio(input_path: str, output_path: str, fmt: str):
     elif fmt == "flac": cmd.extend(["-codec:a", "flac"])
     cmd.append(output_path)
     
-    subprocess.run(cmd, capture_output=(not DEBUG), check=True)
+    try:
+        subprocess.run(cmd, capture_output=(not DEBUG), check=True)
+    except subprocess.CalledProcessError as e:
+        # Log full detail internally; expose only a generic message to the client
+        # to avoid leaking internal paths and system info in HTTP 500 responses.
+        print(f"[!] ffmpeg error (code {e.returncode}): {e}", flush=True)
+        raise RuntimeError(f"Audio conversion to {fmt} failed (ffmpeg exited {e.returncode})")
 
 def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str, params: dict):
     if DEBUG: print(f"--- MAIN LANE: Using hot worker (GPU) ---", flush=True)
@@ -227,9 +281,14 @@ async def run_tts_child_lane_async(text: str, lang: str, speaker_wav_path: str, 
     sub_env = os.environ.copy()
     sub_env["COQUI_TOS_AGREED"] = "1"
     sub_env["TTS_HOME"] = MODEL_CACHE_DIR
-    
+    # SECURITY FIX (v1.4.1): Pass text via environment variable instead of interpolating it
+    # into the python_code f-string. Interpolation allowed injection of arbitrary Python code
+    # if the input text contained triple-quotes or escape sequences.
+    sub_env["TTS_INPUT_TEXT"] = text
+
     # We use a python one-liner to maintain full API parity with the hot worker
     # including personality parameters which the 'tts' CLI does not support.
+    # NOTE: 'text' is intentionally NOT interpolated here — read from TTS_INPUT_TEXT env var.
     python_code = f"""
 from TTS.api import TTS
 import os
@@ -238,7 +297,7 @@ model_name = "{MODEL_NAME}"
 tts = TTS(model_name=model_name, progress_bar=False)
 tts.to("cuda")
 tts.tts_to_file(
-    text=\"\"\"{text}\"\"\",
+    text=os.environ['TTS_INPUT_TEXT'],
     speaker_wav="{speaker_wav_path}",
     language="{lang}",
     file_path="{output_path}",
@@ -260,15 +319,134 @@ tts.tts_to_file(
         stderr=asyncio.subprocess.PIPE,
         env=sub_env
     )
-    stdout, stderr = await process.communicate()
-    
+    # Timeout guard: if the subprocess hangs (OOM, driver crash, etc.) kill it and fail fast.
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=COLD_LANE_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        process.kill()
+        if DEBUG: print(f"[!] Cold worker timed out after {COLD_LANE_TIMEOUT_SECONDS}s. Process killed.", flush=True)
+        raise Exception(f"Cold worker timed out after {COLD_LANE_TIMEOUT_SECONDS}s")
+
     if process.returncode != 0:
         if DEBUG: print(f"[!] Cold worker failed: {stderr.decode()}", flush=True)
         raise Exception(f"Cold worker subprocess failed (code {process.returncode})")
 
 # -------------------------------
-# 5. Endpoint: POST /v1/audio/speech
+# 5. Stream Lane: WAV Header + Async Generator
 # -------------------------------
+
+# XTTS-v2 inference_stream output constants (fixed by the model, cannot be changed)
+_STREAM_SAMPLE_RATE = 24000
+_STREAM_NUM_CHANNELS = 1
+_STREAM_BITS_PER_SAMPLE = 16
+
+def make_streaming_wav_header() -> bytes:
+    """
+    Build a standard WAV header with data_size=0xFFFFFFFF (unknown/streaming length).
+    Most audio players and decoders accept this convention for live streams.
+    Format: PCM 16-bit, mono, 24000 Hz (XTTS-v2 native output).
+    """
+    data_size = 0xFFFFFFFF  # unknown length — standard convention for streamed WAV
+    riff_size = data_size + 36
+    byte_rate = _STREAM_SAMPLE_RATE * _STREAM_NUM_CHANNELS * _STREAM_BITS_PER_SAMPLE // 8
+    block_align = _STREAM_NUM_CHANNELS * _STREAM_BITS_PER_SAMPLE // 8
+    return struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF', riff_size, b'WAVE',
+        b'fmt ', 16,
+        1,                        # PCM format tag
+        _STREAM_NUM_CHANNELS,
+        _STREAM_SAMPLE_RATE,
+        byte_rate,
+        block_align,
+        _STREAM_BITS_PER_SAMPLE,
+        b'data', data_size
+    )
+
+async def stream_tts_hot_lane_async(text: str, lang: str, speaker_wav: str, speed: float, params: dict):
+    """
+    Async generator for streaming TTS via XTTS-v2 inference_stream (Hot Lane only).
+
+    Yields:
+      1. A WAV header (44 bytes) with unknown data size.
+      2. PCM int16 audio chunks as they are produced by the model.
+
+    Architecture:
+      inference_stream() is a synchronous blocking generator. It runs in a
+      dedicated daemon thread (sync_produce) which pushes each chunk into an
+      asyncio.Queue. The async generator consumes that queue without blocking
+      the event loop. A None sentinel signals end-of-stream. Exceptions from
+      the producer are re-raised in the async context.
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def sync_produce():
+        """Synchronous producer: runs XTTS-v2 inference_stream in a background thread."""
+        try:
+            if DEBUG: print("--- STREAM LANE: Computing speaker conditioning latents... ---", flush=True)
+            gpt_cond_latent, speaker_embedding = (
+                tts_hot_worker.synthesizer.tts_model.get_conditioning_latents(
+                    audio_path=[speaker_wav]
+                )
+            )
+            if DEBUG: print("--- STREAM LANE: inference_stream started. ---", flush=True)
+            for chunk in tts_hot_worker.synthesizer.tts_model.inference_stream(
+                text,
+                lang,
+                gpt_cond_latent,
+                speaker_embedding,
+                speed=speed,
+                temperature=params.get("temperature", 0.75),
+                length_penalty=params.get("length_penalty", 1.0),
+                repetition_penalty=params.get("repetition_penalty", 5.0),
+                top_k=params.get("top_k", 50),
+                top_p=params.get("top_p", 0.85),
+                stream_chunk_size=20,  # tokens per chunk; lower = lower latency, more requests
+            ):
+                # Convert float32 tensor in [-1.0, 1.0] to int16 PCM bytes
+                pcm_bytes = (chunk.squeeze() * 32767).to(torch.int16).cpu().numpy().tobytes()
+                asyncio.run_coroutine_threadsafe(queue.put(pcm_bytes), loop).result()
+        except Exception as e:
+            asyncio.run_coroutine_threadsafe(queue.put(e), loop).result()
+        finally:
+            # None sentinel: signals the async consumer that the stream is complete
+            asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
+
+    # Yield WAV header before starting inference
+    yield make_streaming_wav_header()
+
+    producer_thread = threading.Thread(target=sync_produce, daemon=True)
+    producer_thread.start()
+
+    # Consume chunks as they arrive from the producer thread
+    while True:
+        item = await queue.get()
+        if item is None:  # sentinel: stream complete
+            break
+        if isinstance(item, Exception):
+            raise item
+        yield item
+
+    if DEBUG: print("--- STREAM LANE: Stream complete. ---", flush=True)
+
+# -------------------------------
+# 6. Endpoint: POST /v1/audio/speech
+# -------------------------------
+
+@app.get("/health")
+async def health_check():
+    """Returns server liveness and hot worker status. Suitable for proxies and Docker healthchecks.
+    'hot_worker_loaded': false and 'hot_worker_error' set means server is running in degraded mode
+    (all requests routed to Cold Lane). The server is still operational but slower.
+    """
+    return {
+        "status": "ok",
+        "version": "1.4.5",
+        "model": MODEL_NAME,
+        "hot_worker_loaded": tts_hot_worker is not None,
+        "hot_worker_error": hot_worker_error
+    }
 
 @app.get("/v1/voices")
 async def list_voices():
@@ -326,33 +504,119 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
     }
     cache_key = hashlib.md5(f"{req.input}{voice_id}{req.speed}{req.response_format}{req.temperature}{req.length_penalty}{req.repetition_penalty}{req.top_k}{req.top_p}".encode()).hexdigest()
     final_output_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.{req.response_format}")
-    
-    if os.path.exists(final_output_path):
-        if DEBUG: print(f"--- ROUTER: Cache hit for {cache_key} ---", flush=True)
-        return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
 
-    temp_wav = os.path.join(tempfile.gettempdir(), f"tts_{uuid.uuid4()}.wav")
-    try:
-        if tts_hot_worker and model_lock.acquire(blocking=False):
-            if DEBUG: print("--- ROUTER: Fast lane is free. Sending request. ---", flush=True)
-            try:
-                await asyncio.to_thread(run_tts_hot_lane, req.input, lang, speaker_wav, req.speed, temp_wav, params)
-            finally:
-                model_lock.release()
-        else:
-            if DEBUG: print("--- ROUTER: Main lane is busy. Rerouting to child lane. ---", flush=True)
-            await run_tts_child_lane_async(req.input, lang, speaker_wav, req.speed, temp_wav, params)
-        
-        convert_audio(temp_wav, final_output_path, req.response_format)
-        
-    except Exception as e:
-        if DEBUG: print(f"[!] ERROR in create_speech: {str(e)}", flush=True)
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if os.path.exists(temp_wav): os.remove(temp_wav)
-        if custom_wav_path and os.path.exists(custom_wav_path): os.remove(custom_wav_path)
+    # Per-key lock: prevents two concurrent requests with the same cache_key from both
+    # synthesizing the same audio. The second request waits here, then hits the cache check
+    # below and returns the already-written file without launching a new synthesis.
+    cache_lock = _cache_locks.setdefault(cache_key, asyncio.Lock())
+    async with cache_lock:
+        if os.path.exists(final_output_path):
+            # Check cache TTL: if CACHE_TTL_MINUTES > 0, expire files older than the threshold
+            if CACHE_TTL_MINUTES > 0:
+                file_age_minutes = (time.time() - os.path.getmtime(final_output_path)) / 60
+                if file_age_minutes >= CACHE_TTL_MINUTES:
+                    if DEBUG: print(f"--- ROUTER: Cache expired for {cache_key} (age: {file_age_minutes:.1f}min >= {CACHE_TTL_MINUTES}min). Re-synthesizing. ---", flush=True)
+                    os.remove(final_output_path)
+                else:
+                    if DEBUG: print(f"--- ROUTER: Cache hit for {cache_key} ---", flush=True)
+                    return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
+            else:
+                if DEBUG: print(f"--- ROUTER: Cache hit for {cache_key} ---", flush=True)
+                return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
+
+        temp_wav = os.path.join(tempfile.gettempdir(), f"tts_{uuid.uuid4()}.wav")
+        try:
+            if tts_hot_worker and model_lock.acquire(blocking=False):
+                if DEBUG: print("--- ROUTER: Fast lane is free. Sending request. ---", flush=True)
+                try:
+                    await asyncio.to_thread(run_tts_hot_lane, req.input, lang, speaker_wav, req.speed, temp_wav, params)
+                finally:
+                    model_lock.release()
+            else:
+                if DEBUG: print("--- ROUTER: Main lane is busy. Rerouting to child lane. ---", flush=True)
+                await run_tts_child_lane_async(req.input, lang, speaker_wav, req.speed, temp_wav, params)
+
+            convert_audio(temp_wav, final_output_path, req.response_format)
+
+        except Exception as e:
+            if DEBUG: print(f"[!] ERROR in create_speech: {str(e)}", flush=True)
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            if os.path.exists(temp_wav): os.remove(temp_wav)
+            if custom_wav_path and os.path.exists(custom_wav_path): os.remove(custom_wav_path)
 
     return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
+
+# -------------------------------
+# 7. Endpoint: POST /v1/audio/speech/stream
+# -------------------------------
+
+@app.post("/v1/audio/speech/stream")
+async def create_speech_stream(request: Request):
+    """
+    Streaming TTS endpoint. Returns audio/wav with chunked transfer encoding.
+
+    Uses XTTS-v2 inference_stream on the Hot Lane only.
+    - If the hot worker is not loaded: HTTP 503.
+    - If the hot worker is busy (lock taken): HTTP 503. Use /v1/audio/speech for queued synthesis.
+    - No cache: audio is generated and sent in real time.
+    - Output format: WAV (PCM 16-bit, mono, 24000 Hz). The response_format field is ignored.
+    - custom_voice_file (multipart) is not supported on this endpoint.
+
+    Accepts the same JSON / form-data fields as POST /v1/audio/speech.
+    """
+    content_type = request.headers.get("Content-Type", "")
+    if "application/json" in content_type:
+        data = await request.json()
+        req = SpeechRequest(**data)
+    else:
+        form_data = await request.form()
+        req = SpeechRequest(
+            input=form_data.get("input"),
+            voice=form_data.get("voice", "alloy"),
+            response_format="wav",  # streaming output is always WAV
+            speed=float(form_data.get("speed", 1.0)),
+            language=form_data.get("language", os.environ.get("DEFAULT_LANGUAGE", "en")),
+            temperature=float(form_data.get("temperature", os.environ.get("DEFAULT_TEMPERATURE", 0.75))),
+            length_penalty=float(form_data.get("length_penalty", os.environ.get("DEFAULT_LENGTH_PENALTY", 1.0))),
+            repetition_penalty=float(form_data.get("repetition_penalty", os.environ.get("DEFAULT_REPETITION_PENALTY", 5.0))),
+            top_k=int(form_data.get("top_k", os.environ.get("DEFAULT_TOP_K", 50))),
+            top_p=float(form_data.get("top_p", os.environ.get("DEFAULT_TOP_P", 0.85)))
+        )
+
+    if not tts_hot_worker:
+        raise HTTPException(status_code=503, detail="Hot worker not loaded. Streaming is unavailable.")
+
+    if not model_lock.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Hot worker is busy. Retry or use /v1/audio/speech for queued synthesis.")
+
+    v_file = VOICE_MAP.get(req.voice.lower(), VOICE_MAP["alloy"])
+    speaker_wav = os.path.join(VOICE_ASSET_DIR, v_file)
+    if not os.path.exists(speaker_wav):
+        if DEBUG: print(f"[!] Voice file not found: {speaker_wav}. Falling back to alloy.", flush=True)
+        speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
+
+    lang = req.language
+    params = {
+        "temperature": req.temperature,
+        "length_penalty": req.length_penalty,
+        "repetition_penalty": req.repetition_penalty,
+        "top_k": req.top_k,
+        "top_p": req.top_p
+    }
+
+    if DEBUG: print(f"--- STREAM LANE: New request. voice={req.voice}, lang={lang} ---", flush=True)
+
+    async def generate_and_release():
+        """Wraps the stream generator and guarantees model_lock is released after streaming ends."""
+        try:
+            async for chunk in stream_tts_hot_lane_async(req.input, lang, speaker_wav, req.speed, params):
+                yield chunk
+        finally:
+            model_lock.release()
+            if DEBUG: print("--- STREAM LANE: Lock released. ---", flush=True)
+
+    return StreamingResponse(generate_and_release(), media_type="audio/wav")
 
 if __name__ == "__main__":
     import uvicorn
