@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Removed unnecessary `torchcodec` dependency:** `coqui-tts[codec]` changed to `coqui-tts` and `torchcodec` removed from `requirements.txt`. `torchcodec` is only used by the Bark model and audio dataset tooling — not by XTTS-v2. The dependency caused hot worker startup failure (`libnppicc.so.13: cannot open shared object file`) on systems where CUDA NPP libraries are not present.
 
+## [1.4.8] - 2026-04-03
+
+### Fixed
+- **Reverted torchcodec stub monkey-patch:** The stub introduced in 1.4.7 was unnecessary on production systems where torchcodec installs correctly. Restored `torchcodec` as an explicit dependency in `requirements.txt`. Kept `transformers<5.0.0` pin.
+
 ## [1.4.7] - 2026-04-03
 
 ### Fixed

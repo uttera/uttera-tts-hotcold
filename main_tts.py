@@ -20,11 +20,12 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.4.7
+# Version: 1.4.8
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.4.8 (2026-04-03): Reverted torchcodec stub monkey-patch (unnecessary on production). Restored torchcodec in requirements.txt. Kept transformers<5.0.0 pin.
 # - 1.4.7 (2026-04-03): Fixed torchcodec/CUDA NPP startup crash. Stub catches RuntimeError, injected before transformers import. transformers pinned <5.0.0.
 # - 1.4.6 (2026-04-02): Removed hardcoded sentencepiece==0.2.0 from setup.sh (no wheel for Python 3.14).
 # - 1.4.5 (2026-04-02): Moved transformers/isin_mps_friendly patch from setup.sh to a Python monkey-patch in main_tts.py. Survives venv upgrades.
@@ -104,28 +105,6 @@ for env_path in env_paths:
 # Suppress noisy warnings
 warnings.filterwarnings('ignore', message=".*pkg_resources is deprecated.*")
 warnings.filterwarnings('ignore', message=".*_register_pytree_node` is deprecated.*")
-
-# Monkey-patch: inject a stub torchcodec module if the real one cannot load.
-# IMPORTANT: this must run before ANY transformers import, because transformers evaluates
-# `_torchcodec_available = importlib.util.find_spec("torchcodec")` at module load time.
-# If the stub is not in sys.modules first, the check will return False and TTS/__init__.py
-# will raise ImportError even though XTTS-v2 never calls torchcodec at runtime.
-#
-# Context: coqui-tts >= 0.27.5 requires torchcodec when torch >= 2.9 (TTS/__init__.py check).
-# torchcodec is only used by the Bark model and dataset tooling — not by XTTS-v2.
-# The real torchcodec (cu130 variant) requires libnppicc.so.13 (CUDA NPP 13), absent on
-# CUDA 12.x systems. The stub satisfies the import check without loading any shared library.
-try:
-    import torchcodec  # noqa: F401 — attempt real import first
-except (ImportError, OSError, RuntimeError):
-    import types as _types
-    import importlib.machinery as _imm
-    _tc_stub = _types.ModuleType("torchcodec")
-    _tc_stub.__spec__ = _imm.ModuleSpec("torchcodec", loader=None)
-    _tc_dec_stub = _types.ModuleType("torchcodec.decoders")
-    _tc_dec_stub.__spec__ = _imm.ModuleSpec("torchcodec.decoders", loader=None)
-    sys.modules["torchcodec"] = _tc_stub
-    sys.modules["torchcodec.decoders"] = _tc_dec_stub
 
 # Monkey-patch: inject isin_mps_friendly if missing from transformers.
 # Coqui XTTS-v2 (0.27.5) calls this function which is absent in some transformers versions.
@@ -260,7 +239,7 @@ class SpeechRequest(BaseModel):
     top_k: int = int(os.environ.get("DEFAULT_TOP_K", 50))
     top_p: float = float(os.environ.get("DEFAULT_TOP_P", 0.85))
 
-app = FastAPI(title="Coqui TTS Server", version="1.4.7")
+app = FastAPI(title="Coqui TTS Server", version="1.4.8")
 
 # -------------------------------
 # 4. Core Logic: The Two Lanes
@@ -466,7 +445,7 @@ async def health_check():
     """
     return {
         "status": "ok",
-        "version": "1.4.7",
+        "version": "1.4.8",
         "model": MODEL_NAME,
         "hot_worker_loaded": tts_hot_worker is not None,
         "hot_worker_error": hot_worker_error
