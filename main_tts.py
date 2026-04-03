@@ -20,11 +20,12 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.4.9
+# Version: 1.4.10
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.4.10 (2026-04-03): Added GET /v1/models endpoint (OpenAI spec compliance). Returns tts-1 and tts-1-hd. Version string moved to SERVER_VERSION constant.
 # - 1.4.9 (2026-04-03): Pinned torch==2.9.0, torchaudio==2.9.0, torchcodec==0.8.1, transformers>=4.35.2,<5.0.0 to match production (sphinx). setup.sh now selects python3.12 first (Python 3.13+ has no wheels for these packages).
 # - 1.4.8 (2026-04-03): Reverted torchcodec stub monkey-patch (unnecessary on production). Restored torchcodec in requirements.txt. Kept transformers<5.0.0 pin.
 # - 1.4.7 (2026-04-03): Fixed torchcodec/CUDA NPP startup crash. Stub catches RuntimeError, injected before transformers import. transformers pinned <5.0.0.
@@ -435,8 +436,24 @@ async def stream_tts_hot_lane_async(text: str, lang: str, speaker_wav: str, spee
     if DEBUG: print("--- STREAM LANE: Stream complete. ---", flush=True)
 
 # -------------------------------
-# 6. Endpoint: POST /v1/audio/speech
+# 6. Endpoints: /health, /v1/models
 # -------------------------------
+
+SERVER_VERSION = "1.4.10"
+
+@app.get("/v1/models")
+async def list_models():
+    """OpenAI-compatible model listing. Returns the two standard TTS model IDs.
+    The 'model' field in synthesis requests is accepted for spec compliance but ignored
+    internally — all requests are handled by the configured XTTS-v2 model.
+    """
+    return {
+        "object": "list",
+        "data": [
+            {"id": "tts-1",    "object": "model", "created": 1677610602, "owned_by": "uttera-legacy"},
+            {"id": "tts-1-hd", "object": "model", "created": 1677610602, "owned_by": "uttera-legacy"},
+        ]
+    }
 
 @app.get("/health")
 async def health_check():
@@ -446,7 +463,7 @@ async def health_check():
     """
     return {
         "status": "ok",
-        "version": "1.4.8",
+        "version": SERVER_VERSION,
         "model": MODEL_NAME,
         "hot_worker_loaded": tts_hot_worker is not None,
         "hot_worker_error": hot_worker_error

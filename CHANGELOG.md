@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.10] - 2026-04-03
+
+### Added
+- **`GET /v1/models` endpoint:** OpenAI-compatible model listing returning `tts-1` and `tts-1-hd`. Required by clients (Open WebUI, SillyTavern, etc.) that query the model list before issuing TTS requests. The `model` field in synthesis requests continues to be accepted for spec compliance but is ignored internally.
+
+### Changed
+- **Version string moved to `SERVER_VERSION` constant:** `GET /health` now reads the version from this constant instead of a hardcoded string literal.
+
 ## [1.4.9] - 2026-04-02
 
 ### Fixed
