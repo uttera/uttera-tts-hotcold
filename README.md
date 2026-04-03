@@ -22,18 +22,22 @@ This server uses **Coqui TTS**, which is released under various licenses dependi
   - **Hot Worker:** Primary model resident in VRAM for sub-second (XTTSv2 ~1.0s) inference.
   - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy.
 - **GPU Accelerated:** Native support for NVIDIA CUDA via `torch`, ensuring ultra-fast inference and high-quality synthesis.
-- **OpenAI Compatible:** Native support for OpenAI parameters (`model`, `voice`, `speed`, `response_format`).
+- **OpenAI Compatible:** Native support for OpenAI parameters (`model`, `voice`, `speed`, `response_format`). Includes `GET /v1/models` for client autodiscovery.
+- **Streaming:** `POST /v1/audio/speech/stream` delivers chunked WAV audio in real time via XTTS-v2's `inference_stream()` (Hot Lane only).
 - **Personality Tuning:** Full control over synthesis expressiveness via parameters like `temperature`, `top_p/k`, and `penalties`.
 - **Multilingual Excellence:** Native support for 16 languages: `en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja` (English by default).
-- **Intelligent Caching:** MD5-based caching for zero-latency repeated requests.
+- **Intelligent Caching:** MD5-based caching for zero-latency repeated requests. Configurable TTL via `CACHE_TTL_MINUTES`.
+- **Health Endpoint:** `GET /health` exposes server version, model name, and hot worker status for proxies and Docker healthchecks.
 
 ## 📦 Installation & Setup
 
 ### 1. Prerequisites (Debian/Ubuntu)
 Install the following system dependencies first:
 ```bash
-sudo apt update && sudo apt install -y espeak-ng curl file ffmpeg
+sudo apt update && sudo apt install -y espeak-ng curl file ffmpeg python3.12 python3.12-venv
 ```
+
+> **Python version:** `setup.sh` requires **Python 3.12**. Python 3.13+ has no prebuilt wheels for `torch==2.9.0` or `torchcodec==0.8.1`. On systems where Python 3.12 is not the default (e.g. Ubuntu 24.10 with Python 3.14), the package above installs it alongside the system Python.
 
 ### 2. Unified Installation
 ```bash
@@ -75,10 +79,20 @@ The server supports advanced personality parameters to tune the output voice. Th
 ### 🌐 Supported Languages
 The following language codes are supported: `en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja`.
 
+## 📡 API Endpoints
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Server liveness, version, and hot worker status. |
+| `GET` | `/v1/models` | OpenAI-compatible model list (`tts-1`, `tts-1-hd`). |
+| `GET` | `/v1/voices` | List of available voice identifiers. |
+| `POST` | `/v1/audio/speech` | Standard TTS synthesis (Hot or Cold Lane, cached). |
+| `POST` | `/v1/audio/speech/stream` | Real-time streaming TTS (Hot Lane only, no cache). |
+
 ## 🔧 Troubleshooting
 
 ### Transformers Compatibility Error
-The current version of Coqui-TTS (0.27.5) has a known bug with recent `transformers` versions regarding the `isin_mps_friendly` import. The `setup.sh` script automatically patches this in your virtual environment. If you install manually, ensure you replace that import with `torch.isin`.
+The `isin_mps_friendly` compatibility fix is applied automatically as a Python monkey-patch in `main_tts.py` before any model import, and also by `setup.sh` as a fallback. No manual action is required.
 
 ## 🛠 Execution
 
@@ -99,10 +113,14 @@ uvicorn main_tts:app --host 0.0.0.0 --port 5100
 
 The server includes a `.env.example` file. You can create a **`.env`** file in the root directory to override default behaviors without changing the code.
 
-- `TTS_MODEL`: Model name to pre-load into the Hot Worker (default: `xtts_v2`).
-- `DEFAULT_LANGUAGE`: Sets the default language if not specified in the request (default: `en`).
-- `DEBUG`: Set to `true` to enable worker routing traces.
-- `VENV_PYTHON`: Absolute path to the python executable in the venv (auto-detected if local).
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `TTS_MODEL` | `xtts_v2` | Model name to pre-load into the Hot Worker. |
+| `DEFAULT_LANGUAGE` | `en` | Default language if not specified in the request. |
+| `CACHE_TTL_MINUTES` | `10080` (7 days) | Cache file expiration. Set to `0` to disable. |
+| `COLD_LANE_TIMEOUT_SECONDS` | `120` | Max time to wait for a Cold Lane subprocess before killing it and returning HTTP 500. |
+| `DEBUG` | `false` | Set to `true` to enable worker routing traces. |
+| `VENV_PYTHON` | *(auto-detected)* | Absolute path to the venv Python executable. |
 
 *Note: All personality parameters listed in the section above can also be set via their respective `DEFAULT_*` environment variables.*
 
