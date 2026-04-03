@@ -156,7 +156,7 @@ By default, the server binds to **`127.0.0.1`** on port **`5100`**.
 - To allow external network access, modify the `--host` parameter to `0.0.0.0` in the execution command or systemd unit.
 - **WARNING**: This API **does not have authentication**. Exposing it to the network via `0.0.0.0` represents a security risk. Ensure the server is protected by a firewall or operating within a secure VPN/Local Network.
 
-## 📊 Performance (Sphinx GPU)
+## 📊 Performance (NVIDIA RTX 5090)
 | Task | Latency (Hot Lane) | Latency (Cold Lane) |
 | :--- | :--- | :--- |
 | Short Response (XTTSv2) | **~1.0s** | ~19s (Cold load) |
