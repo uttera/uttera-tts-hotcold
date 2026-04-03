@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.7] - 2026-04-03
+
+### Fixed
+- **Removed unnecessary `torchcodec` dependency:** `coqui-tts[codec]` changed to `coqui-tts` and `torchcodec` removed from `requirements.txt`. `torchcodec` is only used by the Bark model and audio dataset tooling — not by XTTS-v2. The dependency caused hot worker startup failure (`libnppicc.so.13: cannot open shared object file`) on systems where CUDA NPP libraries are not present.
+
+## [1.4.7] - 2026-04-03
+
+### Fixed
+- **torchcodec / CUDA NPP startup crash:** `coqui-tts[codec]` is restored in `requirements.txt` (required for package metadata). `transformers` pins added (`<5.0.0` for GPT2PreTrainedModel compatibility with XTTS-v2). The torchcodec monkey-patch now catches `RuntimeError` in addition to `ImportError` and `OSError`, covering the case where the package is installed but `libnppicc.so.13` (CUDA NPP 13) is absent on CUDA 12.x systems. The stub is injected into `sys.modules` **before** any transformers import, ensuring `_torchcodec_available` is evaluated correctly. On systems where torchcodec cannot load its native library, the server starts in degraded mode (hot worker fails, cold lane still operational) rather than crashing.
+
 ## [1.4.6] - 2026-04-02
 
 ### Fixed
