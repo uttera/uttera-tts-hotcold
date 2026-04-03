@@ -164,3 +164,10 @@ By default, the server binds to **`127.0.0.1`** on port **`5100`**.
 
 ## 🛡 License
 GNU GPL v3. Maintainers: Hugo L. Espuny & Uttera
+
+## ☕ Support
+
+If this project is useful to you, consider supporting its development:
+
+- **Bitcoin (BTC):** `38jJyMomtUqhCjuNJ9VxKpgEyMyx37Zqix`
+- **Monero (XMR):** `82bbUZdkMXUPAma4ioTuZNcJgTh8YTv4XNUwPy6T28kYJWCfeGgV79AZb7amCszFXeBaa5u595cQBVjFS4PkBGim56ap7Ej`
