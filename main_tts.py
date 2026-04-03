@@ -20,11 +20,12 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.4.8
+# Version: 1.4.9
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.4.9 (2026-04-03): Pinned torch==2.9.0, torchaudio==2.9.0, torchcodec==0.8.1, transformers>=4.35.2,<5.0.0 to match production (sphinx). setup.sh now selects python3.12 first (Python 3.13+ has no wheels for these packages).
 # - 1.4.8 (2026-04-03): Reverted torchcodec stub monkey-patch (unnecessary on production). Restored torchcodec in requirements.txt. Kept transformers<5.0.0 pin.
 # - 1.4.7 (2026-04-03): Fixed torchcodec/CUDA NPP startup crash. Stub catches RuntimeError, injected before transformers import. transformers pinned <5.0.0.
 # - 1.4.6 (2026-04-02): Removed hardcoded sentencepiece==0.2.0 from setup.sh (no wheel for Python 3.14).
