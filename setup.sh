@@ -1,18 +1,28 @@
 #!/bin/bash
 # Uttera TTS Unified Setup Script
-# Version: 1.1.2 (Local Fix)
-# Description: Orchestrates Python environment setup with specific patches for 3.14 compatibility.
+# Version: 1.1.3
+# Description: Orchestrates Python environment setup. Uses Python 3.12 for dependency
+#              compatibility (torchcodec/torch wheel availability). Falls back to python3
+#              if python3.12 is not found.
 
 set -e
 
 echo "🦾 Uttera - Starting Unified Installation Protocol..."
 
 # 1. Python Virtual Environment
+# Python 3.12 is required: torchcodec==0.8.1 and torch==2.9.0 have no wheels for 3.13+.
 echo "[*] Initializing Python Virtual Environment..."
-python3 -m venv venv
+if command -v python3.12 &>/dev/null; then
+    PYTHON_BIN=python3.12
+    echo "    -> Using python3.12"
+else
+    PYTHON_BIN=python3
+    echo "    [!] python3.12 not found, falling back to $(python3 --version). Some dependencies may fail."
+fi
+$PYTHON_BIN -m venv venv
 source venv/bin/activate
 
-# 2. Pre-installation for Python 3.14 stability
+# 2. Build-time dependencies
 echo "[*] Installing build-time dependencies..."
 pip install --upgrade pip setuptools wheel
 
@@ -20,7 +30,7 @@ pip install --upgrade pip setuptools wheel
 echo "[*] Installing core dependencies from requirements.txt..."
 pip install -r requirements.txt
 
-# 4. Patch transformers for 3.14 compatibility
+# 4. Patch transformers for compatibility (isin_mps_friendly missing in some versions)
 # NOTE (v1.4.5): This patch is now also applied as a Python monkey-patch in main_tts.py
 # (before the TTS import), making it resilient to venv upgrades. This shell patch
 # remains here as a belt-and-suspenders measure but is no longer the primary fix.
