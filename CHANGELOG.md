@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.9] - 2026-04-02
+
+### Fixed
+- **Pinned dependencies to match production environment:** `torch==2.9.0`, `torchaudio==2.9.0`, `torchcodec==0.8.1`, `transformers>=4.35.2,<5.0.0`. Python 3.13+ has no prebuilt wheels for these packages; floating ranges (`>=2.1.0`) caused pip to resolve to newer versions incompatible with the installed CUDA NPP libraries.
+- **`setup.sh` now selects python3.12:** Python 3.14 (system default on some Ubuntu 24.10 systems) has no wheels for torch 2.9.0 or torchcodec 0.8.1. `setup.sh` now checks for `python3.12` first and falls back to `python3` with a warning.
+
 ## [1.4.7] - 2026-04-03
 
 ### Fixed
