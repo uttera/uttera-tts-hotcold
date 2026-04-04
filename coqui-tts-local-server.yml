@@ -1,0 +1,11 @@
+name: "Coqui TTS Local Server"
+website_url: "https://github.com/fakehec/coqui-tts-local-server"
+source_code_url: "https://github.com/fakehec/coqui-tts-local-server"
+description: "High-performance Coqui TTS API server with OpenAI-compatible endpoints and personality tuning."
+licenses:
+  - GPL-3.0
+platforms:
+  - Python
+  - Docker
+tags:
+  - Generative Artificial Intelligence (GenAI)
