@@ -32,6 +32,21 @@ Generates audio from input text using the specified voice and personality parame
 | `top_k` | Integer | `50` | Limits sampling to the top K tokens. |
 | `top_p` | Float | `0.85` | Nucleus sampling threshold. |
 
+### `POST /v1/audio/speech/stream`
+
+Real-time streaming TTS endpoint. Returns chunked audio as it is generated.
+*Note: This endpoint only runs on the Hot Lane and does not use caching.*
+
+**Example Request:**
+```bash
+curl -X POST "http://localhost:5100/v1/audio/speech/stream" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "input": "I am generating this audio in real time.",
+       "voice": "narrator"
+     }' --output stream.wav
+```
+
 ---
 
 ## 2. Examples
@@ -99,6 +114,46 @@ The default values for all parameters (except `input`) can be modified system-wi
 ---
 
 ## 5. Utility Endpoints
+
+### `GET /health`
+
+Returns server liveness and hot worker status. Suitable for proxies and Docker healthchecks.
+
+**Example Request:**
+```bash
+curl -X GET "http://localhost:5100/health"
+```
+
+**Example Response:**
+```json
+{
+  "status": "ok",
+  "version": "1.4.10",
+  "model": "tts_models/multilingual/multi-dataset/xtts_v2",
+  "hot_worker_loaded": true,
+  "hot_worker_error": null
+}
+```
+
+### `GET /v1/models`
+
+OpenAI-compatible model listing. Returns the supported TTS model IDs.
+
+**Example Request:**
+```bash
+curl -X GET "http://localhost:5100/v1/models"
+```
+
+**Example Response:**
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "tts-1", "object": "model", "created": 1677610602, "owned_by": "uttera-legacy"},
+    {"id": "tts-1-hd", "object": "model", "created": 1677610602, "owned_by": "uttera-legacy"}
+  ]
+}
+```
 
 ### `GET /v1/voices`
 
