@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  coqui-tts:
+    build: .
+    container_name: coqui-tts-server
+    restart: unless-stopped
+    ports:
+      - "5100:5100"
+    volumes:
+      - ./assets/models:/app/assets/models
+      - ./assets/cache:/app/assets/cache
+      - ./assets/voices:/app/assets/voices
+    environment:
+      - TTS_MODEL=tts_models/multilingual/multi-dataset/xtts_v2
+      - DEBUG=false
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
