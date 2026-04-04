@@ -151,6 +151,79 @@ systemctl --user daemon-reload
 systemctl --user enable --now coqui-tts.service
 ```
 
+## 🐳 Docker
+
+### Host Prerequisites (one-time setup)
+
+Before running `docker compose up` for the first time, the host machine requires two one-time configuration steps to enable GPU passthrough via the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) CDI mode.
+
+> These steps are required because Docker's default legacy GPU mode relies on BPF cgroup device filters, which are not available in cgroup v2 environments (Ubuntu 22.04+). CDI solves this cleanly.
+
+**1. Add the NVIDIA package repository:**
+```bash
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+```
+
+**2. Install the toolkit:**
+```bash
+sudo apt update && sudo apt install -y nvidia-container-toolkit
+```
+
+**3. Generate the CDI spec** (exposes the GPU to containers via a stable device descriptor):
+```bash
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+```
+
+**4. Enable CDI in the Docker daemon:**
+```bash
+sudo tee /etc/docker/daemon.json <<'EOF'
+{
+  "features": {
+    "cdi": true
+  }
+}
+EOF
+sudo systemctl restart docker
+```
+
+**5. Verify it works:**
+```bash
+docker run --rm --device nvidia.com/gpu=all nvidia/cuda:12.6.3-runtime-ubuntu24.04 nvidia-smi
+```
+
+> **Note:** Step 3 must be re-run if the NVIDIA driver is updated (`sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`).
+
+### Running with Docker Compose
+
+```bash
+# Build and start (downloads model and standard voices on first run)
+docker compose up -d
+
+# Check server is ready
+curl http://localhost:5100/health
+
+# View logs (including first-run provisioning progress)
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+On first run, `entrypoint.sh` automatically:
+- Downloads the `xtts_v2` model (~1.7GB) into `assets/models/`
+- Downloads the 6 standard voices (alloy, echo, fable, onyx, nova, shimmer) into `assets/voices/standard/`
+
+Both are persisted in host volumes and skipped on subsequent starts.
+
+### Elite Voices in Docker
+
+Elite/custom voices are not provisioned automatically. Mount them into the container by placing your `.wav` files in `assets/voices/elite/` on the host — the volume mapping `./assets/voices:/app/assets/voices` picks them up automatically without rebuilding the image.
+
 ## 🔒 Security & Network Note
 By default, the server binds to **`127.0.0.1`** on port **`5100`**. 
 - To allow external network access, modify the `--host` parameter to `0.0.0.0` in the execution command or systemd unit.

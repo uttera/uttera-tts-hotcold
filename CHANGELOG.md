@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.12] - 2026-04-04
+
+### Added
+- **Official Docker Support:** Fully containerized deployment using NVIDIA CUDA 12.6 on Ubuntu 24.04 base.
+- **Auto-Provisioning Entrypoint:** Automated model download (XTTSv2) and voice gallery setup on first run.
+- **GPU Acceleration:** Robust GPU passthrough configuration for NVIDIA RTX 50-series hardware.
+- **Documentation:** Comprehensive Docker installation and execution guides added to README.md.
+
 ## [1.4.11] - 2026-04-03
 
 ### Fixed
