@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased — experimental-py311]
+
+### Changed
+- **Python 3.11 as recommended runtime:** `setup.sh` (v1.1.4) now targets Python 3.11 instead of
+  Python 3.12. Measured VRAM footprint with identical torch==2.9.0+cu128 + TTS 0.27.5 stack:
+  **Python 3.11 = 4362 MiB vs Python 3.13 = 8132 MiB** (−3.77 GB per instance). This difference
+  is structural (not runtime accumulation) — confirmed by clean restarts with empty cache at both
+  versions. Python 3.11.15 confirmed compatible with the full dependency tree.
+  Install: `sudo apt install python3.11 python3.11-venv python3.11-dev`
+
+### Validated
+- 40-clip Spanish stress test (same test vectors as v1.5.7 validation) against Python 3.11 server
+  (venv311, clean cache): **40/40 OK, 0 errores**. Latency avg=22.88s, min=3.16s, max=51.74s.
+  Audio quality identical. Cold EMA calibrated at 22.76s. VRAM grew only 0.36 GB over the full
+  run (10.25 → 9.89 GB free). Functionally equivalent to Python 3.13 results (avg 23.35s).
+
+---
+
 ## [1.5.7] - 2026-04-07
 
 ### Added

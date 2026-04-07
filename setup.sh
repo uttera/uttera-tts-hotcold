@@ -1,23 +1,26 @@
 #!/bin/bash
 # Uttera TTS Unified Setup Script
-# Version: 1.1.3
-# Description: Orchestrates Python environment setup. Uses Python 3.12 for dependency
-#              compatibility (torchcodec/torch wheel availability). Falls back to python3
-#              if python3.12 is not found.
+# Version: 1.1.4
+# Description: Orchestrates Python environment setup. Uses Python 3.11 for minimal VRAM
+#              footprint (~4.4 GB vs ~8.1 GB with 3.13). Falls back to python3 if
+#              python3.11 is not found. Install: sudo apt install python3.11 python3.11-venv
 
 set -e
 
 echo "🦾 Uttera - Starting Unified Installation Protocol..."
 
 # 1. Python Virtual Environment
-# Python 3.12 is required: torchcodec==0.8.1 and torch==2.9.0 have no wheels for 3.13+.
+# Python 3.11 is preferred: measured ~4.4 GB VRAM footprint vs ~8.1 GB with Python 3.13
+# for identical torch==2.9.0+cu128 + TTS 0.27.5 stack. Critical for fleet deployments.
 echo "[*] Initializing Python Virtual Environment..."
-if command -v python3.12 &>/dev/null; then
-    PYTHON_BIN=python3.12
-    echo "    -> Using python3.12"
+if command -v python3.11 &>/dev/null; then
+    PYTHON_BIN=python3.11
+    echo "    -> Using python3.11 (optimal VRAM footprint)"
 else
     PYTHON_BIN=python3
-    echo "    [!] python3.12 not found, falling back to $(python3 --version). Some dependencies may fail."
+    echo "    [!] python3.11 not found, falling back to $(python3 --version)."
+    echo "    [!] WARNING: Python 3.13+ uses ~8.1 GB VRAM vs ~4.4 GB with Python 3.11."
+    echo "    [!] Install: sudo apt install python3.11 python3.11-venv python3.11-dev"
 fi
 $PYTHON_BIN -m venv venv
 source venv/bin/activate
@@ -36,7 +39,7 @@ pip install -r requirements.txt
 # remains here as a belt-and-suspenders measure but is no longer the primary fix.
 echo "[*] Applying compatibility patches to transformers..."
 # Search for the file in the venv to ensure we hit the right path
-TARGET_FILE=$(find venv -name "pytorch_utils.py" | grep "transformers" | head -n 1)
+TARGET_FILE=$(find venv -name "pytorch_utils.py" 2>/dev/null | grep "transformers" | head -n 1)
 if [ -f "$TARGET_FILE" ]; then
     if ! grep -q "isin_mps_friendly" "$TARGET_FILE"; then
         echo -e "\ndef isin_mps_friendly(elements, test_elements):\n    import torch\n    return torch.isin(elements, test_elements)\n" >> "$TARGET_FILE"
