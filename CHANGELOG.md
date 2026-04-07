@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.7] - 2026-04-07
+
+### Added
+- **Cold lane WAV-missing diagnostic:** When the cold subprocess exits with code 0 but produces no output WAV (empty text, silent crash, driver issue), full `stdout` and `stderr` are now logged and a descriptive `RuntimeError("Cold Lane produced no output (exit 0, WAV missing)")` is raised instead of the opaque downstream error at `convert_audio`. Mirrors the JSON-missing diagnostic introduced in whisper-stt-local-server v1.4.7.
+- **`cold_workers_in_flight` added to `GET /health`:** The count of currently active cold lane subprocesses is now exposed under `smart_routing` alongside `vram_free_gb` and `vram_sufficient_for_cold`, consistent with whisper-stt-local-server v1.4.7.
+
+### Validated
+- 40-clip Spanish stress test comparing v1.5.7 (local, 16.99 GB VRAM free) vs v1.4.10 (sphinx, production, caché limpia). Four waves: 10 concurrent, 10 staggered @0.2s, 10 concurrent, 10 staggered @0.1s.
+  - **v1.5.7: 40/40 OK, 0 errores.** VRAM pre-check + cold→hot fallback absorben toda la carga: hot lane avg 4-9s, cold lane avg 30-49s, cold EMA calibrado en ~30s, máx 3 workers concurrentes con `MIN_COLD_VRAM_GB=5.0`.
+  - **v1.4.10: 13/40 OK, 27/40 ERR HTTP 500.** Sin VRAM pre-check ni fallback, los cold workers hacen OOM al cargar XTTS-v2 simultáneamente y el error llega directamente al cliente. W3 (10 concurrent con hot ocupado) produjo 9/10 errores. Los 13 OK corresponden exactamente a las requests que pillaron el hot lane libre.
+  - El test cuantifica el impacto real de v1.5.0–v1.5.6: **tasa de error 67.5% → 0%** bajo carga concurrente.
+
+## [1.5.6] - 2026-04-06
+
+### Added
+- **VRAM pre-check before cold lane dispatch:** Branch C now calls `torch.cuda.mem_get_info()` before spawning a cold subprocess. If effective free VRAM (raw free minus `in_flight × MIN_COLD_VRAM_GB`) is below `MIN_COLD_VRAM_GB` (default `5.0` GB for XTTS-v2, configurable via `.env`), the request is rerouted to the hot lane queue immediately — avoiding the ~10s wasted loading the model before OOM. The in-flight reservation prevents burst routing from over-committing VRAM before any subprocess has allocated. `vram_free_gb`, `min_cold_vram_gb`, `cold_workers_in_flight`, and `vram_sufficient_for_cold` added to `GET /health` under `smart_routing`. Set `MIN_COLD_VRAM_GB=0` to disable. Same feature applied to whisper-stt-local-server v1.4.7 (default `4.0` GB).
+
+## [1.5.5] - 2026-04-06
+
+### Fixed
+- **`model_lock` deadlock under client timeout:** Branch B and the Branch C fallback previously used two separate `asyncio.to_thread` calls — one to acquire `model_lock` and one to run synthesis. If asyncio cancelled the coroutine (e.g. client timeout during burst load) between the two awaits, `model_lock` was left permanently acquired with no one to release it, deadlocking the server for all subsequent requests. Fixed by introducing `_run_tts_hot_locked()`, which performs acquire + synthesize + release inside a single `asyncio.to_thread` call. Same fix applied to whisper-stt-local-server v1.4.5.
+
+## [1.5.4] - 2026-04-06
+
+### Added
+- **Auto-Calibration of `COLD_START_TIME_SECONDS`:** The router now measures each successful cold lane completion and maintains an EMA (α = 0.2) of cold lane times in `_cold_ema_start`. Once seeded, `_get_cold_start_time()` returns the live EMA instead of the static `COLD_START_TIME_SECONDS`, so the routing threshold self-adjusts to actual hardware performance without manual tuning. `COLD_START_TIME_SECONDS` in `.env` becomes an initial hint / fallback used only before the first successful cold lane completes. `cold_start_calibrated`, `cold_ema_start_seconds`, and `cold_start_configured_seconds` added to `GET /health` under `smart_routing`.
+
+## [1.5.3] - 2026-04-06
+
+### Fixed
+- **EMA not updated from fallback path:** The cold-lane fallback was calling `_update_hot_ema` with an elapsed time that included the cold-lane failure duration (~`COLD_START_TIME_SECONDS`). This inflated `ema_spw` after each fallback, causing the router to dispatch cold lanes more aggressively on subsequent bursts — a positive feedback loop (more OOMs → more fallbacks → higher EMA → more cold dispatches → more OOMs). The EMA is now updated only from clean Branch A and Branch B completions. The same fix was applied to both fallback paths in whisper-stt-local-server.
+
+## [1.5.2] - 2026-04-06
+
+### Added
+- **Cold-Lane Fallback to Hot Lane:** When a cold lane subprocess exits with a non-zero code (CUDA OOM under burst load), the request is transparently retried on the hot lane queue instead of returning HTTP 500. Uses the same Branch-B queuing mechanism — `word_count` is added to `_hot_queue_words` before waiting so late-arriving requests see the correct queue depth. Mirrors the behaviour introduced in whisper-stt-local-server v1.4.1.
+
+### Changed
+- **Warmup text extended to 8 words** (`"All systems nominal. Standing by for further orders."`). The previous 2-word text (`"System online."`) produced an initial `ema_spw` ~2× higher than the real-workload average, causing the router to dispatch cold lanes too aggressively on the first burst after startup.
+
+## [1.5.1] - 2026-04-06
+
+### Added
+- **Startup EMA Warmup:** After the hot worker loads, a short synthesis (`"System online."`) is run through the hot lane via the FastAPI lifespan event to seed `_hot_ema_spw` before the first real request arrives. Without this, `EMA=None` at startup caused every concurrent request to go to cold lane (Branch C), triggering CUDA OOM when multiple workers tried to load the model simultaneously. The warmup runs before `Application startup complete` (blocking the event loop intentionally, since no requests can arrive yet), and prints the measured `spw` on the console so the operator can verify hardware throughput at startup. Failure is logged but non-fatal: the server starts in uncalibrated mode rather than refusing to start.
+
+## [1.5.0] - 2026-04-06
+
+### Added
+- **Smart Hot-Lane Routing:** The router now uses a three-branch decision instead of the previous binary hot/cold split.
+  - **Branch A** (hot lane free): use it immediately — unchanged from prior behaviour.
+  - **Branch B** (hot lane busy, worth waiting): if the estimated queue drain time is below `COLD_START_TIME_SECONDS × HOT_QUEUE_SAFETY_FACTOR`, the request waits for the hot lane via a non-blocking `asyncio.to_thread(model_lock.acquire)` instead of spawning a cold subprocess. This eliminates unnecessary cold-lane spawns for short and medium requests when the hot lane is lightly backlogged.
+  - **Branch C** (hot lane busy, cold is faster): drain estimate exceeds threshold → spawn cold lane as before.
+  - The drain estimate is computed from `_hot_queue_words × ema_spw`, where `_hot_queue_words` counts all words currently in the hot pipeline (being synthesised + queued waiting), ensuring late-arriving requests always see the full accumulated depth.
+  - The EMA (α = 0.2) is updated after each successful hot-lane synthesis and self-calibrates to the actual hardware throughput. Falls back to Branch C (cold lane) when not yet calibrated.
+  - New env vars: `COLD_START_TIME_SECONDS` (default `10.0` s — measure once on your hardware), `HOT_QUEUE_SAFETY_FACTOR` (default `0.8`).
+  - Routing decision and live telemetry (`ema_spw`, `hot_queue_words`, `hot_queue_drain_estimate_seconds`, `threshold_seconds`) exposed in `GET /health` under `smart_routing`.
+
+### Performance (verified on RTX 50-series, XTTS-v2, cold start ≈ 10 s)
+- **3 concurrent requests** (6–12 words each): all routed to hot lane queue. Total wall time **4.4 s**. Without smart routing, req2 and req3 would have each waited ~10 s for a cold lane to load.
+- **6 concurrent requests** (6–25 words): first 3 hot-queued (drain estimates 2.4 s, 6.1 s — below 8 s threshold). Last 3 dispatched to cold lanes when accumulated drain reached **10.5 s > 8.0 s** threshold. Cold workers ran in parallel; req4–6 resolved in ~22 s. Router correctly identified the crossover point.
+
 ## [1.4.12] - 2026-04-04
 
 ### Added

@@ -20,11 +20,71 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.4.10
+# Version: 1.5.7
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.5.7 (2026-04-07): Added cold lane WAV-missing diagnostic: when the cold subprocess exits 0
+#   but produces no output WAV (empty text, silent crash, driver issue), full stdout/stderr are
+#   logged and a descriptive RuntimeError is raised instead of the opaque downstream error.
+#   Added cold_workers_in_flight to GET /health under smart_routing (mirrors whisper v1.4.7).
+#   Validated with 40-clip Spanish stress test vs v1.4.10 (production, caché limpia):
+#   v1.5.7 40/40 OK vs v1.4.10 13/40 OK (27 HTTP 500 por OOM en cold lane sin fallback).
+#   Error rate 67.5% → 0% under concurrent load. Cold EMA ~30s, MIN_COLD_VRAM_GB=5.0.
+# - 1.5.6 (2026-04-06): VRAM pre-check before cold lane dispatch. Branch C now queries
+#   torch.cuda.mem_get_info() before spawning a cold subprocess. If effective free VRAM
+#   (raw free minus in_flight × MIN_COLD_VRAM_GB) is below MIN_COLD_VRAM_GB (default 5.0 GB
+#   for XTTS-v2, configurable via .env), the request is rerouted to the hot lane queue
+#   immediately instead of wasting ~10s on a model load that will OOM mid-way. Free VRAM,
+#   MIN_COLD_VRAM_GB, and vram_sufficient_for_cold exposed in GET /health under smart_routing.
+#   Same feature applied to whisper-stt-local-server v1.4.7 (default 4.0 GB).
+# - 1.5.5 (2026-04-06): Fixed model_lock deadlock under client timeout (burst load). Branch B and
+#   the Branch C fallback previously used two separate asyncio.to_thread calls: one to acquire
+#   model_lock and one to run synthesis. If asyncio cancelled the coroutine (client timeout)
+#   between the two awaits, model_lock was left permanently acquired, deadlocking the server.
+#   Fixed by introducing _run_tts_hot_locked() which performs acquire + synthesize + release
+#   inside a single asyncio.to_thread call. Confirmed by burst-of-40 test: previous version
+#   deadlocked after client timeouts; this version processes all requests in queue even after
+#   client disconnect.
+# - 1.5.4 (2026-04-06): Auto-calibration of COLD_START_TIME_SECONDS. An EMA (alpha=0.2) of
+#   measured cold lane completion times now replaces the static COLD_START_TIME_SECONDS as the
+#   router threshold once at least one cold lane has completed successfully. COLD_START_TIME_SECONDS
+#   in .env becomes an initial hint / fallback used until the EMA is seeded. _get_cold_start_time()
+#   returns the live EMA or the configured fallback. cold_start_calibrated and
+#   cold_ema_start_seconds exposed in GET /health under smart_routing.
+# - 1.5.3 (2026-04-06): EMA no longer updated from fallback path. The fallback elapsed
+#   includes cold-lane failure time (~COLD_START_TIME_SECONDS), inflating spw and causing
+#   the router to dispatch cold lanes more aggressively on subsequent bursts (positive
+#   feedback loop → more OOMs → more fallbacks). EMA is now updated only from clean
+#   Branch A and B completions. Also applied to whisper-stt-local-server (both transcription
+#   and translation fallback paths).
+# - 1.5.2 (2026-04-06): Cold-Lane Fallback to Hot Lane. When a cold lane subprocess exits
+#   with a non-zero code (CUDA OOM under burst load), the request is transparently retried
+#   on the hot lane queue instead of returning HTTP 500. Same Branch-B mechanism: adds
+#   word_count to _hot_queue_words before waiting. Warmup text changed to 8 words for a
+#   more representative initial EMA seed (prevents over-eager cold-lane dispatch at startup).
+# - 1.5.1 (2026-04-06): Startup EMA Warmup. After the hot worker loads, a short synthesis
+#   ("System online.") is run through the hot lane via the FastAPI lifespan event to seed
+#   _hot_ema_spw before the first real request arrives. Without this, EMA=None at startup
+#   caused every concurrent request to go to cold lane (Branch C), triggering CUDA OOM when
+#   multiple workers loaded the model simultaneously. The warmup runs after Application startup
+#   and prints the measured spw so the operator can verify throughput at startup. Failure is
+#   logged but non-fatal: the server starts in uncalibrated mode rather than refusing to start.
+# - 1.5.0 (2026-04-06): Smart Hot-Lane Routing. Three-branch router replaces the previous
+#   binary hot/cold decision. Branch A: hot lane free → use immediately (unchanged). Branch B:
+#   hot lane busy but estimated drain time < COLD_START_TIME_SECONDS * HOT_QUEUE_SAFETY_FACTOR
+#   → queue for hot lane (asyncio.to_thread on model_lock.acquire, non-blocking). Branch C:
+#   hot lane busy and drain estimate exceeds threshold → spawn cold lane as before. The drain
+#   estimate uses a per-request EMA (alpha=0.2) of seconds-per-word, updated after each
+#   successful hot-lane synthesis. _hot_queue_words tracks all words in the hot pipeline
+#   (being synthesised + waiting) so late-arriving requests see the full queue depth.
+#   Falls back to Branch C when the EMA is not yet calibrated (first concurrency cycle).
+#   New env vars: COLD_START_TIME_SECONDS (default 10.0s), HOT_QUEUE_SAFETY_FACTOR (default 0.8).
+#   Routing stats and live EMA exposed in GET /health under 'smart_routing'.
+#   Verified on RTX 50-series: 3 concurrent requests resolved in 4.4s total (all hot-queued,
+#   drain estimates well below threshold). 6 concurrent requests: first 3 hot-queued, last 3
+#   correctly dispatched to cold lanes when drain_est reached 10.5s > 8.0s threshold.
 # - 1.4.10 (2026-04-03): Added GET /v1/models endpoint (OpenAI spec compliance). Returns tts-1 and tts-1-hd. Version string moved to SERVER_VERSION constant.
 # - 1.4.9 (2026-04-03): Pinned torch==2.9.0, torchaudio==2.9.0, torchcodec==0.8.1, transformers>=4.35.2,<5.0.0 to match production (sphinx). setup.sh now selects python3.12 first (Python 3.13+ has no wheels for these packages).
 # - 1.4.8 (2026-04-03): Reverted torchcodec stub monkey-patch (unnecessary on production). Restored torchcodec in requirements.txt. Kept transformers<5.0.0 pin.
@@ -90,6 +150,7 @@ import subprocess
 import threading
 import warnings
 import sys
+from contextlib import asynccontextmanager
 from typing import Optional, List, Union
 from dotenv import load_dotenv
 
@@ -170,6 +231,30 @@ CACHE_TTL_MINUTES = int(os.environ.get("CACHE_TTL_MINUTES", 10080))
 # Default: 120s. Prevents hung subprocesses (OOM, driver crash) from blocking requests forever.
 COLD_LANE_TIMEOUT_SECONDS = int(os.environ.get("COLD_LANE_TIMEOUT_SECONDS", 120))
 
+# --- Smart Hot-Lane Routing ---
+# Initial hint for cold lane startup time. Used as the routing threshold until the auto-calibrated
+# EMA (_cold_ema_start) is seeded by the first successful cold lane completion. After that,
+# _get_cold_start_time() returns the live EMA instead. Set in .env only if cold lanes never run
+# during startup and you want a specific initial bias.
+# Default: 10s (typical RTX 50-series / mid-range GPU cold start).
+COLD_START_TIME_SECONDS = float(os.environ.get("COLD_START_TIME_SECONDS", 10.0))
+
+# Safety margin applied to COLD_START_TIME_SECONDS when comparing with hot queue drain estimate.
+# 0.8 means "queue hot only if we expect to finish at least 20% before the cold lane would be ready".
+# Lower values = more conservative (bias toward cold lane). Range: 0.0–1.0.
+HOT_QUEUE_SAFETY_FACTOR = float(os.environ.get("HOT_QUEUE_SAFETY_FACTOR", 0.8))
+
+# Minimum free VRAM (GB) required to spawn a cold lane worker.
+# If free VRAM is below this threshold at dispatch time, Branch C redirects to the hot lane
+# queue instead of spawning a subprocess that will OOM mid-load (~10s wasted before failure).
+# Default: 5.0 GB (XTTS-v2 ~3.5 GB model + loading overhead).
+# Set to 0 to disable the VRAM check (not recommended on memory-constrained hardware).
+MIN_COLD_VRAM_GB = float(os.environ.get("MIN_COLD_VRAM_GB", 5.0))
+
+# EMA smoothing factor for the hot-lane seconds-per-word estimator.
+# Lower = slower to adapt (more stable). Higher = reacts faster to recent requests.
+_HOT_EMA_ALPHA = 0.2
+
 # --- Voice Mapping: OpenAI Standards & Elite Gallery ---
 VOICE_MAP = {
     "alloy": "standard/alloy.wav",
@@ -189,6 +274,8 @@ VOICE_MAP = {
     "voice-g": "elite/redacted.wav",
     "voice-h": "elite/redacted.wav"
 }
+
+SERVER_VERSION = "1.5.7"
 
 # -------------------------------
 # 2. Concurrency & Model Loading
@@ -226,6 +313,147 @@ def load_hot_worker():
 load_hot_worker()
 
 # -------------------------------
+# 2b. Smart Routing Telemetry
+# -------------------------------
+# All fields below are accessed exclusively from the asyncio event loop thread.
+# No threading.Lock required — asyncio.to_thread returns control to the loop before
+# we read or write these, so there are no concurrent mutations.
+
+# Exponential moving average of hot-lane synthesis time in seconds per word.
+# None = not yet calibrated (no successful hot-lane synthesis has completed yet).
+_hot_ema_spw: Optional[float] = None
+
+# Total words currently tracked in the hot-lane pipeline: the request being synthesised
+# plus any requests waiting to acquire model_lock. Updated before enqueue, decremented
+# after completion so that arriving requests always see the full queue depth.
+_hot_queue_words: int = 0
+
+# EMA of successful cold lane completion times (seconds). None = not yet calibrated.
+# Auto-calibrates COLD_START_TIME_SECONDS so operators don't need to measure it per-hardware.
+# Updated after each successful Branch C completion; replaces COLD_START_TIME_SECONDS as the
+# router threshold once seeded.
+_cold_ema_start: Optional[float] = None
+_COLD_EMA_ALPHA = 0.2
+
+# Count of cold lane subprocesses currently in flight (loading model + synthesizing).
+# Each in-flight worker reserves MIN_COLD_VRAM_GB from the effective free pool so that
+# simultaneous Branch C routing decisions don't over-commit VRAM before any worker allocates.
+_cold_workers_in_flight: int = 0
+
+
+def _update_cold_ema(elapsed: float) -> None:
+    """Update the cold-lane time EMA after a successful cold lane synthesis."""
+    global _cold_ema_start
+    if _cold_ema_start is None:
+        _cold_ema_start = elapsed
+    else:
+        _cold_ema_start = _COLD_EMA_ALPHA * elapsed + (1.0 - _COLD_EMA_ALPHA) * _cold_ema_start
+
+
+def _get_cold_start_time() -> float:
+    """Return the auto-calibrated cold start time EMA, or COLD_START_TIME_SECONDS as fallback."""
+    return _cold_ema_start if _cold_ema_start is not None else COLD_START_TIME_SECONDS
+
+
+def _free_vram_gb() -> Optional[float]:
+    """Return current free VRAM in GB, or None if CUDA is unavailable."""
+    if not torch.cuda.is_available():
+        return None
+    free_bytes, _ = torch.cuda.mem_get_info()
+    return free_bytes / (1024 ** 3)
+
+
+def _has_vram_for_cold_lane() -> bool:
+    """
+    Return True if there is enough free VRAM to load one more cold XTTS-v2 worker.
+
+    Accounts for in-flight cold workers by reserving MIN_COLD_VRAM_GB per worker from
+    the effective free pool, preventing burst routing decisions from over-committing
+    memory before any cold subprocess has started allocating.
+
+    effective_free = gpu_free - (_cold_workers_in_flight × MIN_COLD_VRAM_GB)
+    dispatch cold  if  effective_free >= MIN_COLD_VRAM_GB
+    """
+    if MIN_COLD_VRAM_GB <= 0:
+        return True  # check disabled via env var
+    free = _free_vram_gb()
+    if free is None:
+        return True  # CPU mode: no VRAM constraint
+    effective_free = free - (_cold_workers_in_flight * MIN_COLD_VRAM_GB)
+    return effective_free >= MIN_COLD_VRAM_GB
+
+
+def _count_words(text: str) -> int:
+    """Word count proxy for synthesis time estimation. Minimum 1 to avoid division by zero."""
+    return max(1, len(text.split()))
+
+
+def _update_hot_ema(elapsed: float, word_count: int) -> None:
+    """Update the seconds-per-word EMA after a successful hot-lane synthesis."""
+    global _hot_ema_spw
+    spw = elapsed / word_count
+    if _hot_ema_spw is None:
+        _hot_ema_spw = spw
+    else:
+        _hot_ema_spw = _HOT_EMA_ALPHA * spw + (1.0 - _HOT_EMA_ALPHA) * _hot_ema_spw
+
+
+def _should_queue_hot(incoming_word_count: int) -> bool:
+    """
+    Return True if it is cheaper to wait for the hot lane than to start a cold lane.
+
+    Decision formula:
+        estimated_drain_time = _hot_queue_words * _hot_ema_spw
+        queue_hot  if  estimated_drain_time < COLD_START_TIME_SECONDS * HOT_QUEUE_SAFETY_FACTOR
+
+    incoming_word_count is NOT included in the estimate: we are asking "how long until the
+    hot lane is free for me?", not "how long will my request take once it starts".
+
+    Returns False (→ cold lane) when the EMA is not yet calibrated (first cycle).
+    """
+    if _hot_ema_spw is None:
+        return False
+    estimated_drain = _hot_queue_words * _hot_ema_spw
+    threshold = _get_cold_start_time() * HOT_QUEUE_SAFETY_FACTOR
+    return estimated_drain < threshold
+
+
+async def _warmup_ema():
+    """
+    Run a short synthesis through the hot lane at startup to seed _hot_ema_spw.
+    Seeds the EMA before the first real request arrives, preventing the EMA=None →
+    cold-lane cascade that causes CUDA OOM under burst load at startup.
+    Failure is non-fatal: the server starts in uncalibrated mode with a log warning.
+    """
+    if tts_hot_worker is None:
+        return  # degraded mode — nothing to warm up
+
+    warmup_text = "All systems nominal. Standing by for further orders."
+    word_count = _count_words(warmup_text)
+    speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP.get("alloy", "elite/alloy.wav"))
+    if not os.path.exists(speaker_wav):
+        print("WARMUP: Speaker WAV not found. Skipping EMA seed.", flush=True)
+        return
+
+    print("WARMUP: Seeding EMA with synthesis...", flush=True)
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            tmp_path = f.name
+        try:
+            params = {"temperature": 0.75, "length_penalty": 1.0, "repetition_penalty": 5.0, "top_k": 50, "top_p": 0.85}
+            t0 = time.monotonic()
+            await asyncio.to_thread(run_tts_hot_lane, warmup_text, "en", speaker_wav, 1.0, tmp_path, params)
+            elapsed = time.monotonic() - t0
+            _update_hot_ema(elapsed, word_count)
+            print(f"WARMUP: EMA seeded. spw={_hot_ema_spw:.4f} (elapsed={elapsed:.2f}s for {word_count} words)", flush=True)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+    except Exception as e:
+        print(f"WARMUP: Failed to seed EMA ({e}). Server starting in uncalibrated mode.", flush=True)
+
+
+# -------------------------------
 # 3. OpenAI Schema Models
 # -------------------------------
 class SpeechRequest(BaseModel):
@@ -241,7 +469,13 @@ class SpeechRequest(BaseModel):
     top_k: int = int(os.environ.get("DEFAULT_TOP_K", 50))
     top_p: float = float(os.environ.get("DEFAULT_TOP_P", 0.85))
 
-app = FastAPI(title="Coqui TTS Server", version="1.4.8")
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    await _warmup_ema()
+    yield
+
+
+app = FastAPI(title="Coqui TTS Server", version=SERVER_VERSION, lifespan=_lifespan)
 
 # -------------------------------
 # 4. Core Logic: The Two Lanes
@@ -265,6 +499,23 @@ def convert_audio(input_path: str, output_path: str, fmt: str):
         # to avoid leaking internal paths and system info in HTTP 500 responses.
         print(f"[!] ffmpeg error (code {e.returncode}): {e}", flush=True)
         raise RuntimeError(f"Audio conversion to {fmt} failed (ffmpeg exited {e.returncode})")
+
+def _run_tts_hot_locked(text: str, lang: str, speaker_wav: str, speed: float, output_path: str, params: dict):
+    """
+    Acquire model_lock, synthesize, release — all inside a single thread.
+
+    Always called via asyncio.to_thread(). Keeping acquire and release in the same thread
+    call guarantees the lock is released even if the calling coroutine is cancelled (e.g.
+    client timeout). A two-step pattern (await to_thread(lock.acquire) + await to_thread(work)
+    + release in coroutine finally) leaves the lock permanently acquired if a CancelledError
+    fires between the two awaits, deadlocking the server.
+    """
+    model_lock.acquire()
+    try:
+        run_tts_hot_lane(text, lang, speaker_wav, speed, output_path, params)
+    finally:
+        model_lock.release()
+
 
 def run_tts_hot_lane(text: str, lang: str, speaker_wav: str, speed: float, output_path: str, params: dict):
     if DEBUG: print(f"--- MAIN LANE: Using hot worker (GPU) ---", flush=True)
@@ -335,6 +586,16 @@ tts.tts_to_file(
     if process.returncode != 0:
         if DEBUG: print(f"[!] Cold worker failed: {stderr.decode()}", flush=True)
         raise Exception(f"Cold worker subprocess failed (code {process.returncode})")
+
+    if not os.path.exists(output_path):
+        # exit 0 but no WAV written — subprocess completed without producing output.
+        # Log for diagnostics (e.g. silent crash, empty text, driver issue).
+        print(
+            f"COLD LANE WARNING: exit 0 but WAV not found ({output_path}). "
+            f"stdout={stdout.decode()[:300]!r} stderr={stderr.decode()[:300]!r}",
+            flush=True
+        )
+        raise RuntimeError(f"Cold Lane produced no output (exit 0, WAV missing)")
 
 # -------------------------------
 # 5. Stream Lane: WAV Header + Async Generator
@@ -439,8 +700,6 @@ async def stream_tts_hot_lane_async(text: str, lang: str, speaker_wav: str, spee
 # 6. Endpoints: /health, /v1/models
 # -------------------------------
 
-SERVER_VERSION = "1.4.10"
-
 @app.get("/v1/models")
 async def list_models():
     """OpenAI-compatible model listing. Returns the two standard TTS model IDs.
@@ -457,16 +716,34 @@ async def list_models():
 
 @app.get("/health")
 async def health_check():
-    """Returns server liveness and hot worker status. Suitable for proxies and Docker healthchecks.
+    """Returns server liveness, hot worker status, and smart routing telemetry.
     'hot_worker_loaded': false and 'hot_worker_error' set means server is running in degraded mode
     (all requests routed to Cold Lane). The server is still operational but slower.
+    'smart_routing.ema_spw': null until the first hot-lane synthesis completes (EMA not calibrated).
     """
+    _free = _free_vram_gb()
+    routing_stats = {
+        "cold_start_time_seconds": round(_get_cold_start_time(), 2),
+        "cold_start_calibrated": _cold_ema_start is not None,
+        "cold_ema_start_seconds": round(_cold_ema_start, 2) if _cold_ema_start is not None else None,
+        "cold_start_configured_seconds": COLD_START_TIME_SECONDS,
+        "safety_factor": HOT_QUEUE_SAFETY_FACTOR,
+        "threshold_seconds": round(_get_cold_start_time() * HOT_QUEUE_SAFETY_FACTOR, 2),
+        "ema_spw": round(_hot_ema_spw, 4) if _hot_ema_spw is not None else None,
+        "hot_queue_words": _hot_queue_words,
+        "hot_queue_drain_estimate_seconds": round(_hot_queue_words * _hot_ema_spw, 2) if _hot_ema_spw else None,
+        "vram_free_gb": round(_free, 2) if _free is not None else None,
+        "min_cold_vram_gb": MIN_COLD_VRAM_GB,
+        "cold_workers_in_flight": _cold_workers_in_flight,
+        "vram_sufficient_for_cold": _has_vram_for_cold_lane(),
+    }
     return {
         "status": "ok",
         "version": SERVER_VERSION,
         "model": MODEL_NAME,
         "hot_worker_loaded": tts_hot_worker is not None,
-        "hot_worker_error": hot_worker_error
+        "hot_worker_error": hot_worker_error,
+        "smart_routing": routing_stats,
     }
 
 @app.get("/v1/voices")
@@ -546,16 +823,77 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
                 return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
 
         temp_wav = os.path.join(tempfile.gettempdir(), f"tts_{uuid.uuid4()}.wav")
+        word_count = _count_words(req.input)
+        global _hot_queue_words
         try:
             if tts_hot_worker and model_lock.acquire(blocking=False):
-                if DEBUG: print("--- ROUTER: Fast lane is free. Sending request. ---", flush=True)
+                # ── Branch A: hot lane is free → use it immediately ──────────────
+                if DEBUG: print(f"--- ROUTER: Hot lane free. Routing direct. words={word_count} ---", flush=True)
+                _hot_queue_words += word_count
+                t0 = time.monotonic()
                 try:
                     await asyncio.to_thread(run_tts_hot_lane, req.input, lang, speaker_wav, req.speed, temp_wav, params)
+                    _update_hot_ema(time.monotonic() - t0, word_count)
                 finally:
+                    _hot_queue_words -= word_count
                     model_lock.release()
+
+            elif tts_hot_worker and _should_queue_hot(word_count):
+                # ── Branch B: hot lane busy but cheaper to wait ───────────────────
+                drain_est = (_hot_queue_words * _hot_ema_spw) if _hot_ema_spw else 0.0
+                threshold = _get_cold_start_time() * HOT_QUEUE_SAFETY_FACTOR
+                if DEBUG: print(f"--- ROUTER: Smart routing → queue hot lane. drain_est={drain_est:.1f}s < threshold={threshold:.1f}s. words={word_count} ---", flush=True)
+                _hot_queue_words += word_count   # announce intent before waiting so late arrivals see full depth
+                t0 = time.monotonic()
+                try:
+                    # _run_tts_hot_locked acquires, synthesizes, and releases the lock inside a
+                    # single thread — safe against asyncio task cancellation (client timeout).
+                    # A two-step acquire-then-release pattern deadlocks if a CancelledError fires
+                    # between the two awaits, leaving the lock permanently acquired.
+                    await asyncio.to_thread(_run_tts_hot_locked, req.input, lang, speaker_wav, req.speed, temp_wav, params)
+                    _update_hot_ema(time.monotonic() - t0, word_count)
+                finally:
+                    _hot_queue_words -= word_count
+
             else:
-                if DEBUG: print("--- ROUTER: Main lane is busy. Rerouting to child lane. ---", flush=True)
-                await run_tts_child_lane_async(req.input, lang, speaker_wav, req.speed, temp_wav, params)
+                # ── Branch C: hot lane busy and cold lane is faster ───────────────
+                global _cold_workers_in_flight
+                free_gb = _free_vram_gb()
+                vram_ok = _has_vram_for_cold_lane()
+                if not vram_ok:
+                    # Insufficient VRAM — skip cold subprocess entirely and queue hot directly.
+                    # Avoids the ~10s wasted on a model load that will OOM mid-way.
+                    print(f"--- ROUTER: Insufficient VRAM ({free_gb:.1f} GB free < {MIN_COLD_VRAM_GB} GB required) → queuing hot lane. words={word_count} ---", flush=True)
+                    _hot_queue_words += word_count
+                    t0 = time.monotonic()
+                    try:
+                        await asyncio.to_thread(_run_tts_hot_locked, req.input, lang, speaker_wav, req.speed, temp_wav, params)
+                        _update_hot_ema(time.monotonic() - t0, word_count)
+                    finally:
+                        _hot_queue_words -= word_count
+                else:
+                    if DEBUG:
+                        drain_est = (_hot_queue_words * _hot_ema_spw) if _hot_ema_spw else None
+                        vram_str = f"{free_gb:.1f} GB free ({_cold_workers_in_flight} in-flight)" if free_gb is not None else "VRAM unknown"
+                        if drain_est is not None:
+                            print(f"--- ROUTER: Smart routing → cold lane. drain_est={drain_est:.1f}s ≥ threshold={_get_cold_start_time() * HOT_QUEUE_SAFETY_FACTOR:.1f}s. {vram_str}. words={word_count} ---", flush=True)
+                        else:
+                            print(f"--- ROUTER: EMA not calibrated → cold lane. {vram_str}. words={word_count} ---", flush=True)
+                    _cold_workers_in_flight += 1
+                    t_cold = time.monotonic()
+                    try:
+                        await run_tts_child_lane_async(req.input, lang, speaker_wav, req.speed, temp_wav, params)
+                        _update_cold_ema(time.monotonic() - t_cold)
+                    except Exception as cold_err:
+                        print(f"--- ROUTER: Cold lane failed ({cold_err}). Falling back to hot lane queue. words={word_count} ---", flush=True)
+                        _hot_queue_words += word_count
+                        try:
+                            # Note: EMA is NOT updated here — fallback elapsed includes cold-lane failure time.
+                            await asyncio.to_thread(_run_tts_hot_locked, req.input, lang, speaker_wav, req.speed, temp_wav, params)
+                        finally:
+                            _hot_queue_words -= word_count
+                    finally:
+                        _cold_workers_in_flight -= 1
 
             convert_audio(temp_wav, final_output_path, req.response_format)
 
