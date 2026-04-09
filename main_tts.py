@@ -334,6 +334,16 @@ class _ColdTTSWorker:
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
+    async def _read_stderr(self) -> str:
+        """Read and return any pending stderr output from the subprocess (for diagnostics)."""
+        if self._proc is None or self._proc.stderr is None:
+            return ""
+        try:
+            data = await asyncio.wait_for(self._proc.stderr.read(65536), timeout=2.0)
+            return data.decode(errors="replace").strip()
+        except Exception:
+            return ""
+
     async def spawn(self) -> bool:
         """Spawn the subprocess and wait for {"ready": true}. Returns False on failure."""
         env = os.environ.copy()
@@ -347,14 +357,18 @@ class _ColdTTSWorker:
                 VENV_PYTHON, COLD_WORKER_TTS_SCRIPT,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 env=env,
+                limit=10 * 1024 * 1024,  # 10 MB — XTTS-v2 audio responses can exceed 1 MB base64
             )
             # Wait for {"ready": true}
             line = await asyncio.wait_for(self._proc.stdout.readline(), timeout=120.0)
             msg = json.loads(line.strip())
             return bool(msg.get("ready"))
         except Exception as e:
+            stderr_out = await self._read_stderr()
+            if stderr_out:
+                print(f"COLD WORKER: spawn stderr:\n{stderr_out}", flush=True)
             print(f"COLD WORKER: spawn failed: {e}", flush=True)
             await self.shutdown()
             return False
@@ -373,9 +387,18 @@ class _ColdTTSWorker:
         self._proc.stdin.write(line_bytes)
         await self._proc.stdin.drain()
 
-        response_line = await self._proc.stdout.readline()
-        resp = json.loads(response_line.strip())
+        try:
+            response_line = await self._proc.stdout.readline()
+            resp = json.loads(response_line.strip())
+        except Exception as e:
+            stderr_out = await self._read_stderr()
+            if stderr_out:
+                print(f"COLD WORKER: subprocess stderr:\n{stderr_out}", flush=True)
+            raise
         if "error" in resp:
+            stderr_out = await self._read_stderr()
+            if stderr_out:
+                print(f"COLD WORKER: subprocess stderr:\n{stderr_out}", flush=True)
             raise RuntimeError(resp["error"])
         return base64.b64decode(resp["audio_b64"])
 
@@ -456,18 +479,22 @@ def _run_tts_hot_locked(text: str, lang: str, speaker_wav: str,
 
 def _run_tts_hot_lane(text: str, lang: str, speaker_wav: str,
                        speed: float, output_path: str, params: dict):
-    tts_hot_worker.tts_to_file(
-        text=text,
-        speaker_wav=speaker_wav,
-        language=lang,
-        file_path=output_path,
-        speed=speed,
-        temperature=params.get("temperature", 0.75),
-        length_penalty=params.get("length_penalty", 1.0),
-        repetition_penalty=params.get("repetition_penalty", 5.0),
-        top_k=params.get("top_k", 50),
-        top_p=params.get("top_p", 0.85),
-    )
+    # autocast ensures fp32 activations (e.g. speaker conditioning latents) are
+    # automatically cast to fp16 when COQUI_FP16=1, avoiding HalfTensor/FloatTensor
+    # type mismatches inside tts_to_file without requiring manual tensor casting.
+    with torch.autocast("cuda", dtype=torch.float16, enabled=(COQUI_FP16 and torch.cuda.is_available())):
+        tts_hot_worker.tts_to_file(
+            text=text,
+            speaker_wav=speaker_wav,
+            language=lang,
+            file_path=output_path,
+            speed=speed,
+            temperature=params.get("temperature", 0.75),
+            length_penalty=params.get("length_penalty", 1.0),
+            repetition_penalty=params.get("repetition_penalty", 5.0),
+            top_k=params.get("top_k", 50),
+            top_p=params.get("top_p", 0.85),
+        )
 
 
 async def _hot_worker_loop() -> None:
