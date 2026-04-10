@@ -9,3 +9,4 @@ pydantic>=2.0
 python-multipart
 sentencepiece
 python-dotenv
+redis[asyncio]>=5.0.0

@@ -17,6 +17,11 @@
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.6.4 (2026-04-10): Redis self-registration. Each tick of _cold_pool_manager
+#   publishes {load_score, accepts_requests, host, port, version, ts} to
+#   tts:nodes:{NODE_ID} with TTL=3×interval. Opt-in via REDIS_URL env var;
+#   silently disabled if unset or unreachable. Key deleted on clean shutdown.
+#   Adds redis[asyncio]>=5.0.0 to requirements.txt.
 # - 1.6.3 (2026-04-10): Add routing.load_score and routing.accepts_requests to
 #   /health for front-end router support. load_score is drain_estimate/cap (0–1),
 #   accepts_requests is False when model not loaded, errored, or score=1.0.
@@ -101,6 +106,7 @@ import subprocess
 from contextlib import asynccontextmanager
 from typing import Optional, Set
 from dotenv import load_dotenv
+import redis.asyncio as aioredis
 
 # Load .env
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -186,7 +192,17 @@ MIN_COLD_VRAM_GB = float(os.environ.get("MIN_COLD_VRAM_GB", "2.5"))
 # excluded from routing until the queue clears.
 ROUTING_DRAIN_CAP_SECONDS = float(os.environ.get("ROUTING_DRAIN_CAP_SECONDS", "120"))
 
-SERVER_VERSION = "1.6.3"
+# Redis self-registration (opt-in). If REDIS_URL is unset, publishing is skipped.
+# NODE_ID defaults to HOST:PORT. TTL is set to 3× the pool manager interval so
+# the key expires automatically if the node dies or Redis becomes unreachable.
+REDIS_URL     = os.environ.get("REDIS_URL", "")
+REDIS_NODE_ID = os.environ.get("NODE_ID", "") or f"{os.environ.get('NODE_HOST', 'localhost')}:{os.environ.get('NODE_PORT', '5100')}"
+REDIS_NODE_HOST = os.environ.get("NODE_HOST", "localhost")
+REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
+REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
+REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
+
+SERVER_VERSION = "1.6.4"
 
 # -------------------------------
 # 2. Voice Mapping
@@ -279,6 +295,27 @@ _cache_locks: dict = {}
 # Shared work queue + spawn lock (initialised in _lifespan).
 _work_queue: Optional[asyncio.Queue] = None
 _cold_spawn_lock: Optional[asyncio.Lock] = None
+
+# Redis client (None when REDIS_URL is not configured).
+_redis: Optional[aioredis.Redis] = None
+
+
+async def _publish_to_redis(load_score: float, accepts: bool) -> None:
+    """Publish this node's routing state to Redis. Fails silently if unavailable."""
+    if _redis is None:
+        return
+    try:
+        payload = json.dumps({
+            "load_score":       load_score,
+            "accepts_requests": accepts,
+            "host":             REDIS_NODE_HOST,
+            "port":             REDIS_NODE_PORT,
+            "version":          SERVER_VERSION,
+            "ts":               time.time(),
+        })
+        await _redis.set(REDIS_KEY, payload, ex=REDIS_TTL)
+    except Exception:
+        pass  # Redis unavailability must never affect request serving
 
 
 def _count_words(text: str) -> int:
@@ -612,7 +649,8 @@ async def _pool_worker_loop(worker: _ColdTTSWorker, idle_timeout: float) -> None
 async def _cold_pool_manager() -> None:
     """
     Background task: dynamically spawns cold workers based on current queue depth.
-    Wakes every COLD_POOL_MANAGER_INTERVAL seconds.
+    Wakes every COLD_POOL_MANAGER_INTERVAL seconds. Also publishes routing state
+    to Redis on every tick (no-op when REDIS_URL is not configured).
     """
     while True:
         await asyncio.sleep(COLD_POOL_MANAGER_INTERVAL)
@@ -621,35 +659,38 @@ async def _cold_pool_manager() -> None:
         active = len(_pool_worker_tasks)
         loading = _cold_workers_in_flight
 
-        if active + loading >= target:
-            continue
-        if _cold_spawn_lock is None or _cold_spawn_lock.locked():
-            continue
-        if not _has_vram_for_cold_lane():
-            continue
-
-        drain_s = _work_queue_words * (_hot_ema_spw or 0)
-        print(
-            f"--- POOL MGR: target={target} cold workers (active={active}, loading={loading})"
-            f" | queue={_work_queue_words:.0f} words ({drain_s:.1f}s drain) → spawning ---",
-            flush=True,
-        )
-        try:
-            async with _cold_spawn_lock:
-                worker = await _spawn_cold_worker()
-            n_active = len(_pool_worker_tasks)
-            stagger = max(0, COLD_POOL_SIZE - n_active) * COLD_WORKER_IDLE_STAGGER
-            worker_idle_timeout = float(COLD_WORKER_IDLE_TIMEOUT + stagger)
-            task = asyncio.create_task(_pool_worker_loop(worker, worker_idle_timeout))
-            _pool_worker_tasks.add(task)
-            task.add_done_callback(_pool_worker_tasks.discard)
+        if active + loading < target and _cold_spawn_lock and not _cold_spawn_lock.locked() and _has_vram_for_cold_lane():
+            drain_s = _work_queue_words * (_hot_ema_spw or 0)
             print(
-                f"--- POOL MGR: pool worker ready, total_active={len(_pool_worker_tasks)}"
-                f", idle_timeout={worker_idle_timeout:.0f}s ---",
+                f"--- POOL MGR: target={target} cold workers (active={active}, loading={loading})"
+                f" | queue={_work_queue_words:.0f} words ({drain_s:.1f}s drain) → spawning ---",
                 flush=True,
             )
-        except Exception as e:
-            print(f"--- POOL MGR: spawn failed: {e} ---", flush=True)
+            try:
+                async with _cold_spawn_lock:
+                    worker = await _spawn_cold_worker()
+                n_active = len(_pool_worker_tasks)
+                stagger = max(0, COLD_POOL_SIZE - n_active) * COLD_WORKER_IDLE_STAGGER
+                worker_idle_timeout = float(COLD_WORKER_IDLE_TIMEOUT + stagger)
+                task = asyncio.create_task(_pool_worker_loop(worker, worker_idle_timeout))
+                _pool_worker_tasks.add(task)
+                task.add_done_callback(_pool_worker_tasks.discard)
+                print(
+                    f"--- POOL MGR: pool worker ready, total_active={len(_pool_worker_tasks)}"
+                    f", idle_timeout={worker_idle_timeout:.0f}s ---",
+                    flush=True,
+                )
+            except Exception as e:
+                print(f"--- POOL MGR: spawn failed: {e} ---", flush=True)
+
+        # Publish routing state to Redis on every tick (no-op if not configured).
+        drain = (_work_queue_words * _hot_ema_spw) if _hot_ema_spw else None
+        if drain is not None:
+            load_score = round(min(drain / ROUTING_DRAIN_CAP_SECONDS, 1.0), 3)
+        else:
+            load_score = round(min(_work_queue_words / 500.0, 1.0), 3)
+        accepts = tts_hot_worker is not None and hot_worker_error is None and load_score < 1.0
+        await _publish_to_redis(load_score, accepts)
 
 # -------------------------------
 # 10. Startup Warmup
@@ -731,10 +772,19 @@ async def _warmup_cold_ema() -> None:
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
-    global _work_queue, _cold_spawn_lock
+    global _work_queue, _cold_spawn_lock, _redis
 
     _work_queue = asyncio.Queue()
     _cold_spawn_lock = asyncio.Lock()
+
+    if REDIS_URL:
+        try:
+            _redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+            await _redis.ping()
+            print(f"Redis connected: {REDIS_URL} | key={REDIS_KEY} ttl={REDIS_TTL}s", flush=True)
+        except Exception as e:
+            print(f"Redis unavailable ({e}) — running without registration.", flush=True)
+            _redis = None
 
     await _warmup_hot_ema()
     await _warmup_cold_ema()
@@ -749,6 +799,13 @@ async def _lifespan(application: FastAPI):
     for task in list(_pool_worker_tasks):
         task.cancel()
     await asyncio.gather(hot_task, manager_task, *list(_pool_worker_tasks), return_exceptions=True)
+
+    if _redis:
+        try:
+            await _redis.delete(REDIS_KEY)
+        except Exception:
+            pass
+        await _redis.aclose()
 
 
 app = FastAPI(title="Coqui TTS Server", version=SERVER_VERSION, lifespan=_lifespan)
