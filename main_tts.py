@@ -17,6 +17,10 @@
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.6.3 (2026-04-10): Add routing.load_score and routing.accepts_requests to
+#   /health for front-end router support. load_score is drain_estimate/cap (0–1),
+#   accepts_requests is False when model not loaded, errored, or score=1.0.
+#   ROUTING_DRAIN_CAP_SECONDS env var (default 120) controls saturation threshold.
 # - 1.6.2 (2026-04-10): Align /health schema with whisper-stt-local-server.
 #   Renamed cold_pool_size→pool_workers_active, cold_pool_loading→pool_workers_loading.
 #   Added queue_depth, queue_drain_estimate_seconds, pool_workers_optimal,
@@ -177,7 +181,12 @@ HOT_QUEUE_SAFETY_FACTOR = float(os.environ.get("HOT_QUEUE_SAFETY_FACTOR", "0.8")
 # Minimum free VRAM (GB) to spawn a cold worker. 0 = disable check.
 MIN_COLD_VRAM_GB = float(os.environ.get("MIN_COLD_VRAM_GB", "2.5"))
 
-SERVER_VERSION = "1.6.2"
+# Drain time (seconds) considered 100% load for routing score. Requests with a
+# drain estimate at or above this cap receive load_score=1.0 and the node is
+# excluded from routing until the queue clears.
+ROUTING_DRAIN_CAP_SECONDS = float(os.environ.get("ROUTING_DRAIN_CAP_SECONDS", "120"))
+
+SERVER_VERSION = "1.6.3"
 
 # -------------------------------
 # 2. Voice Mapping
@@ -783,6 +792,12 @@ async def list_voices():
 async def health_check():
     _free = _free_vram_gb()
     drain = round(_work_queue_words * _hot_ema_spw, 2) if _hot_ema_spw else None
+    if drain is not None:
+        load_score = round(min(drain / ROUTING_DRAIN_CAP_SECONDS, 1.0), 3)
+    else:
+        # Not yet calibrated — use word count as rough proxy (500 words ≈ saturated)
+        load_score = round(min(_work_queue_words / 500.0, 1.0), 3)
+    accepts = tts_hot_worker is not None and hot_worker_error is None and load_score < 1.0
     return {
         "status": "ok",
         "version": SERVER_VERSION,
@@ -790,6 +805,10 @@ async def health_check():
         "fp16": COQUI_FP16,
         "hot_worker_loaded": tts_hot_worker is not None,
         "hot_worker_error": hot_worker_error,
+        "routing": {
+            "load_score": load_score,
+            "accepts_requests": accepts,
+        },
         "smart_routing": {
             "ema_spw": round(_hot_ema_spw, 4) if _hot_ema_spw is not None else None,
             "cold_start_calibrated": _cold_ema_start is not None,
