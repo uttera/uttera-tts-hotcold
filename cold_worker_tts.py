@@ -29,7 +29,7 @@ Protocol (newline-delimited JSON on stdin/stdout):
 Environment variables (set by main_tts.py at spawn time):
   TTS_MODEL                — model name (default: tts_models/multilingual/multi-dataset/xtts_v2)
   TTS_HOME                 — model cache directory
-  COQUI_FP16               — "1" to use fp16+LN-fp32, "0" for fp32 (default: "1")
+  COQUI_PRECISION          — "fp32", "fp16", or "bf16" (default: "fp32")
   COLD_WORKER_IDLE_TIMEOUT — idle seconds before exit (default: 60)
 """
 
@@ -48,6 +48,14 @@ os.environ["COQUI_TOS_AGREED"] = "1"
 
 import torch
 
+# Monkey-patch: numpy() does not support bf16; auto-convert to fp32.
+_orig_numpy = torch.Tensor.numpy
+def _bf16_safe_numpy(self, *args, **kwargs):
+    if self.dtype == torch.bfloat16:
+        return _orig_numpy(self.float(), *args, **kwargs)
+    return _orig_numpy(self, *args, **kwargs)
+torch.Tensor.numpy = _bf16_safe_numpy
+
 # Monkey-patch: inject isin_mps_friendly if missing from transformers.
 # Must run before TTS import triggers the transformers import chain.
 try:
@@ -63,8 +71,7 @@ from TTS.api import TTS
 # ── Config from env ────────────────────────────────────────────────────────────
 MODEL_NAME = os.environ.get("TTS_MODEL", "tts_models/multilingual/multi-dataset/xtts_v2")
 MODEL_CACHE_DIR = os.environ.get("TTS_HOME", "assets/models")
-_fp16_env = os.environ.get("COQUI_FP16", "1").lower()
-COQUI_FP16 = _fp16_env in ("1", "true", "yes")
+COQUI_PRECISION = os.environ.get("COQUI_PRECISION", "fp32").lower().strip()
 IDLE_TIMEOUT = float(os.environ.get("COLD_WORKER_IDLE_TIMEOUT", "60"))
 
 
@@ -75,18 +82,20 @@ def _write(obj: dict) -> None:
 
 # ── Model loading ──────────────────────────────────────────────────────────────
 _cuda = torch.cuda.is_available()
-_use_fp16 = _cuda and COQUI_FP16
+_reduced_precision = _cuda and COQUI_PRECISION != "fp32"
 
 tts = TTS(model_name=MODEL_NAME, progress_bar=False)
 tts.to("cuda" if _cuda else "cpu")
 
-if _use_fp16:
-    # fp16 weights + LayerNorm in fp32 for numerical stability (same pattern as whisper).
-    # Halves VRAM footprint: ~3.5 GB (fp32) → ~1.75 GB (fp16) per worker.
-    tts.synthesizer.tts_model = tts.synthesizer.tts_model.half()
-    for _m in tts.synthesizer.tts_model.modules():
-        if isinstance(_m, torch.nn.LayerNorm):
-            _m.float()
+if _reduced_precision:
+    if COQUI_PRECISION == "fp16":
+        tts.synthesizer.tts_model = tts.synthesizer.tts_model.half()
+        for _m in tts.synthesizer.tts_model.modules():
+            if isinstance(_m, torch.nn.LayerNorm):
+                _m.float()
+    elif COQUI_PRECISION == "bf16":
+        tts.synthesizer.tts_model = tts.synthesizer.tts_model.to(dtype=torch.bfloat16)
+        tts.synthesizer.tts_model.hifigan_decoder = tts.synthesizer.tts_model.hifigan_decoder.float()
 
 _write({"ready": True})
 
@@ -122,9 +131,8 @@ while True:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
             temp_path = f.name
 
-        # autocast resolves fp32/fp16 type mismatches (speaker conditioning computes
-        # in fp32; autocast casts inputs to fp16 to match the converted model weights).
-        with torch.autocast("cuda", dtype=torch.float16, enabled=_use_fp16):
+        _autocast_dtype = torch.bfloat16 if COQUI_PRECISION == "bf16" else torch.float16
+        with torch.autocast("cuda", dtype=_autocast_dtype, enabled=_reduced_precision):
             tts.tts_to_file(
                 text=text,
                 speaker_wav=speaker_wav,

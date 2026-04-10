@@ -12,11 +12,25 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.6.1
+# Version: 1.7.0
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.7.0 (2026-04-10): External voice map + precision control + dependency pins.
+#   Voice mapping: VOICE_MAP is now loaded from voices.json at startup instead
+#   of being hardcoded. Format: {"name": "subdir/file.wav"}. Search order:
+#   VOICE_ASSET_DIR/voices.json, then BASE_DIR/voices.json (repo root).
+#   Falls back to {"alloy": "standard/alloy.wav"} if neither exists.
+#   Precision: new COQUI_PRECISION env var (fp32|fp16|bf16) replaces COQUI_FP16.
+#   Legacy COQUI_FP16=1 still works (maps to fp16). bf16 converts model weights
+#   to bfloat16 (except HiFiGAN vocoder which needs fp32 for cuFFT) and uses
+#   torch.autocast for inference. Monkey-patches torch.Tensor.numpy to handle
+#   bf16→fp32 conversion (numpy has no bf16 dtype). Default is fp32.
+#   Health endpoint: "fp16" field replaced by "precision" (string).
+#   Dependencies: torch pinned to >=2.9.0,<2.10.0 (torch 2.10+ switches
+#   torchaudio to torchcodec backend requiring CUDA 13 NPP not yet widely
+#   available). torchaudio and torchcodec pinned to matching ranges.
 # - 1.6.4 (2026-04-10): Redis self-registration. Each tick of _cold_pool_manager
 #   publishes {load_score, accepts_requests, host, port, version, ts} to
 #   tts:nodes:{NODE_ID} with TTL=3×interval. Opt-in via REDIS_URL env var;
@@ -33,6 +47,8 @@
 # - 1.6.1 (2026-04-09): Fix retried items bouncing between cold pool workers.
 #   Cold workers now skip items with retried=True (put back on queue) so only
 #   the hot worker processes them, preventing multi-cold-retry loops.
+#   Also: reject empty/whitespace-only input with HTTP 422 instead of letting
+#   it reach synthesizer.tts() which raises UnboundLocalError on empty text.
 # - 1.6.0 (2026-04-09): Shared work queue + persistent cold worker pool. Replaces the
 #   Branch A/B/C spawn-and-die architecture (v1.5.x) with a persistent pool of XTTS-v2
 #   subprocesses that serve multiple requests without reloading the model (~30 s saved
@@ -42,7 +58,8 @@
 #   and EMAs. Idle workers wind down with staggered timeouts (first spawned lives longest).
 #   Cold EMA warmup at startup: a real synthesis runs through a fresh cold worker to measure
 #   startup time and VRAM cost, then kills the worker before entering steady state.
-#   Added COQUI_FP16=1 (default): fp16+LN-fp32 halves VRAM per worker (~3.5→~1.75 GB).
+#   Added COQUI_FP16 option: fp16+LN-fp32 halves VRAM per worker (~3.5→~1.75 GB).
+#   (Superseded by COQUI_PRECISION in v1.7.0; COQUI_FP16=1 still works.)
 #   Crash fallback preserved: failed pool worker re-queues item to hot lane (X-Route:
 #   COLD-POOL>HOT). Zero HTTP 500 from worker crashes.
 # - 1.5.7 (2026-04-07): Added cold lane WAV-missing diagnostic; cold_workers_in_flight
@@ -134,6 +151,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from TTS.api import TTS
 import torch
 
+# Monkey-patch: numpy() does not support bf16; auto-convert to fp32.
+_orig_numpy = torch.Tensor.numpy
+def _bf16_safe_numpy(self, *args, **kwargs):
+    if self.dtype == torch.bfloat16:
+        return _orig_numpy(self.float(), *args, **kwargs)
+    return _orig_numpy(self, *args, **kwargs)
+torch.Tensor.numpy = _bf16_safe_numpy
+
 # -------------------------------
 # 1. Global Config
 # -------------------------------
@@ -165,9 +190,17 @@ DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
 
 CACHE_TTL_MINUTES = int(os.environ.get("CACHE_TTL_MINUTES", 10080))
 
-# fp16 for hot and cold workers. Halves VRAM: ~3.5 GB → ~1.75 GB per worker.
-_fp16_env = os.environ.get("COQUI_FP16", "1").lower()
-COQUI_FP16 = _fp16_env in ("1", "true", "yes")
+# Precision for hot and cold workers. bf16/fp16 halve VRAM: ~3.5 GB → ~1.75 GB per worker.
+# COQUI_PRECISION: "fp32" | "fp16" | "bf16"  (bf16 recommended: same VRAM savings, no overflow risk)
+# Legacy COQUI_FP16=1 maps to fp16 for backward compatibility.
+_prec_env = os.environ.get("COQUI_PRECISION", "").lower().strip()
+if not _prec_env:
+    _fp16_env = os.environ.get("COQUI_FP16", "0").lower()
+    _prec_env = "fp16" if _fp16_env in ("1", "true", "yes") else "fp32"
+if _prec_env not in ("fp32", "fp16", "bf16"):
+    raise ValueError(f"COQUI_PRECISION must be fp32, fp16, or bf16 (got '{_prec_env}')")
+COQUI_PRECISION = _prec_env
+COQUI_FP16 = _prec_env == "fp16"  # legacy compat for env forwarding
 
 # Cold pool sizing (safety cap — actual size is computed dynamically).
 COLD_POOL_SIZE = int(os.environ.get("COLD_POOL_SIZE", "6"))
@@ -202,28 +235,27 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "1.6.4"
+SERVER_VERSION = "1.7.0"
 
 # -------------------------------
-# 2. Voice Mapping
+# 2. Voice Mapping — loaded from VOICE_ASSET_DIR/voices.json
 # -------------------------------
-VOICE_MAP = {
-    "alloy":    "standard/alloy.wav",
-    "echo":     "standard/echo.wav",
-    "fable":    "standard/fable.wav",
-    "onyx":     "standard/onyx.wav",
-    "nova":     "standard/nova.wav",
-    "shimmer":  "standard/shimmer.wav",
-    "narrator":   "elite/narrator.wav",
-    "voice-b":   "elite/redacted-voice.wav",
-    "voice-c":      "elite/redacted-voice.wav",
-    "voice-a": "elite/redacted-voice.wav",
-    "voice-d":  "elite/redacted.wav",
-    "voice-e":   "elite/redacted.wav",
-    "voice-f":     "elite/redacted.wav",
-    "voice-g":     "elite/redacted.wav",
-    "voice-h":   "elite/redacted.wav",
-}
+_voices_json = None
+for _candidate in [
+    os.path.join(VOICE_ASSET_DIR, "voices.json"),
+    os.path.join(BASE_DIR, "voices.json"),
+]:
+    if os.path.exists(_candidate):
+        _voices_json = _candidate
+        break
+
+if _voices_json:
+    with open(_voices_json) as _f:
+        VOICE_MAP = json.load(_f)
+    print(f"VOICES: Loaded {len(VOICE_MAP)} voices from {_voices_json}", flush=True)
+else:
+    VOICE_MAP = {"alloy": "standard/alloy.wav"}
+    print("VOICES: No voices.json found — using default (alloy only)", flush=True)
 
 # -------------------------------
 # 3. OpenAI Schema Models
@@ -249,19 +281,24 @@ tts_hot_worker = None
 hot_worker_error: Optional[str] = None
 
 def _load_hot_model():
-    """Load XTTS-v2 and optionally convert to fp16. Called once at startup."""
+    """Load XTTS-v2 and optionally convert to fp16/bf16. Called once at startup."""
     global tts_hot_worker, hot_worker_error
     print(f"HOT WORKER: Loading {MODEL_NAME}...", flush=True)
     try:
         torch.backends.cudnn.benchmark = True
         worker = TTS(model_name=MODEL_NAME, progress_bar=False)
         worker.to("cuda" if torch.cuda.is_available() else "cpu")
-        if COQUI_FP16 and torch.cuda.is_available():
-            worker.synthesizer.tts_model = worker.synthesizer.tts_model.half()
-            for _m in worker.synthesizer.tts_model.modules():
-                if isinstance(_m, torch.nn.LayerNorm):
-                    _m.float()
-            print("HOT WORKER: fp16 applied (LN in fp32).", flush=True)
+        if COQUI_PRECISION != "fp32" and torch.cuda.is_available():
+            if COQUI_PRECISION == "fp16":
+                worker.synthesizer.tts_model = worker.synthesizer.tts_model.half()
+                for _m in worker.synthesizer.tts_model.modules():
+                    if isinstance(_m, torch.nn.LayerNorm):
+                        _m.float()
+            elif COQUI_PRECISION == "bf16":
+                worker.synthesizer.tts_model = worker.synthesizer.tts_model.to(dtype=torch.bfloat16)
+                # HiFiGAN vocoder uses cuFFT which does not support bf16
+                worker.synthesizer.tts_model.hifigan_decoder = worker.synthesizer.tts_model.hifigan_decoder.float()
+            print(f"HOT WORKER: {COQUI_PRECISION} applied.", flush=True)
         tts_hot_worker = worker
         print("HOT WORKER: Ready.", flush=True)
     except Exception as e:
@@ -402,7 +439,7 @@ class _ColdTTSWorker:
         env = os.environ.copy()
         env["TTS_MODEL"]                = MODEL_NAME
         env["TTS_HOME"]                 = MODEL_CACHE_DIR
-        env["COQUI_FP16"]               = "1" if COQUI_FP16 else "0"
+        env["COQUI_PRECISION"]           = COQUI_PRECISION
         env["COLD_WORKER_IDLE_TIMEOUT"] = str(COLD_WORKER_IDLE_TIMEOUT)
         env["COQUI_TOS_AGREED"]         = "1"
         try:
@@ -533,9 +570,11 @@ def _run_tts_hot_locked(text: str, lang: str, speaker_wav: str,
 def _run_tts_hot_lane(text: str, lang: str, speaker_wav: str,
                        speed: float, output_path: str, params: dict):
     # autocast ensures fp32 activations (e.g. speaker conditioning latents) are
-    # automatically cast to fp16 when COQUI_FP16=1, avoiding HalfTensor/FloatTensor
-    # type mismatches inside tts_to_file without requiring manual tensor casting.
-    with torch.autocast("cuda", dtype=torch.float16, enabled=(COQUI_FP16 and torch.cuda.is_available())):
+    # automatically cast to the target dtype, avoiding type mismatches inside
+    # tts_to_file without requiring manual tensor casting.
+    _autocast_on = COQUI_PRECISION != "fp32" and torch.cuda.is_available()
+    _autocast_dtype = torch.bfloat16 if COQUI_PRECISION == "bf16" else torch.float16
+    with torch.autocast("cuda", dtype=_autocast_dtype, enabled=_autocast_on):
         tts_hot_worker.tts_to_file(
             text=text,
             speaker_wav=speaker_wav,
@@ -859,7 +898,7 @@ async def health_check():
         "status": "ok",
         "version": SERVER_VERSION,
         "model": MODEL_NAME,
-        "fp16": COQUI_FP16,
+        "precision": COQUI_PRECISION,
         "hot_worker_loaded": tts_hot_worker is not None,
         "hot_worker_error": hot_worker_error,
         "routing": {
