@@ -17,6 +17,10 @@
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.6.2 (2026-04-10): Align /health schema with whisper-stt-local-server.
+#   Renamed cold_pool_size→pool_workers_active, cold_pool_loading→pool_workers_loading.
+#   Added queue_depth, queue_drain_estimate_seconds, pool_workers_optimal,
+#   pool_size_cap, vram_sufficient_for_cold.
 # - 1.6.1 (2026-04-09): Fix retried items bouncing between cold pool workers.
 #   Cold workers now skip items with retried=True (put back on queue) so only
 #   the hot worker processes them, preventing multi-cold-retry loops.
@@ -173,7 +177,7 @@ HOT_QUEUE_SAFETY_FACTOR = float(os.environ.get("HOT_QUEUE_SAFETY_FACTOR", "0.8")
 # Minimum free VRAM (GB) to spawn a cold worker. 0 = disable check.
 MIN_COLD_VRAM_GB = float(os.environ.get("MIN_COLD_VRAM_GB", "2.5"))
 
-SERVER_VERSION = "1.6.1"
+SERVER_VERSION = "1.6.2"
 
 # -------------------------------
 # 2. Voice Mapping
@@ -778,7 +782,7 @@ async def list_voices():
 @app.get("/health")
 async def health_check():
     _free = _free_vram_gb()
-    vram_per = _cold_vram_ema_gb if _cold_vram_ema_gb is not None else MIN_COLD_VRAM_GB
+    drain = round(_work_queue_words * _hot_ema_spw, 2) if _hot_ema_spw else None
     return {
         "status": "ok",
         "version": SERVER_VERSION,
@@ -788,13 +792,18 @@ async def health_check():
         "hot_worker_error": hot_worker_error,
         "smart_routing": {
             "ema_spw": round(_hot_ema_spw, 4) if _hot_ema_spw is not None else None,
-            "cold_ema_start_seconds": round(_cold_ema_start, 2) if _cold_ema_start is not None else None,
             "cold_start_calibrated": _cold_ema_start is not None,
-            "cold_pool_size": len(_pool_worker_tasks),
-            "cold_pool_loading": _cold_workers_in_flight,
-            "cold_vram_ema_gb": round(_cold_vram_ema_gb, 2) if _cold_vram_ema_gb is not None else None,
-            "vram_free_gb": round(_free, 2) if _free is not None else None,
+            "cold_ema_start_seconds": round(_cold_ema_start, 2) if _cold_ema_start is not None else None,
+            "queue_depth": _work_queue.qsize() if _work_queue is not None else 0,
             "queue_words": _work_queue_words,
+            "queue_drain_estimate_seconds": drain,
+            "pool_workers_active": len(_pool_worker_tasks),
+            "pool_workers_loading": _cold_workers_in_flight,
+            "pool_workers_optimal": _optimal_cold_workers(),
+            "pool_size_cap": COLD_POOL_SIZE,
+            "vram_free_gb": round(_free, 2) if _free is not None else None,
+            "cold_vram_ema_gb": round(_cold_vram_ema_gb, 2) if _cold_vram_ema_gb is not None else None,
+            "vram_sufficient_for_cold": _has_vram_for_cold_lane(),
         },
     }
 
