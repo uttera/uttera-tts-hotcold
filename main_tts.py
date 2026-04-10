@@ -12,11 +12,14 @@
 # Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
-# Version: 1.6.0
+# Version: 1.6.1
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 1.6.1 (2026-04-09): Fix retried items bouncing between cold pool workers.
+#   Cold workers now skip items with retried=True (put back on queue) so only
+#   the hot worker processes them, preventing multi-cold-retry loops.
 # - 1.6.0 (2026-04-09): Shared work queue + persistent cold worker pool. Replaces the
 #   Branch A/B/C spawn-and-die architecture (v1.5.x) with a persistent pool of XTTS-v2
 #   subprocesses that serve multiple requests without reloading the model (~30 s saved
@@ -559,6 +562,11 @@ async def _pool_worker_loop(worker: _ColdTTSWorker, idle_timeout: float) -> None
             except asyncio.CancelledError:
                 break
 
+            # Retried items are reserved for the hot worker — put back and skip.
+            if item.retried:
+                await _work_queue.put(item)
+                continue
+
             item.route = "COLD-POOL"
             requeued = False
             try:
@@ -822,6 +830,9 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             custom_wav_path = temp_custom.name
         else:
             custom_wav_path = None
+
+    if not req.input or not req.input.strip():
+        raise HTTPException(status_code=422, detail="'input' must be a non-empty string.")
 
     # Resolve speaker WAV
     if custom_wav_path:

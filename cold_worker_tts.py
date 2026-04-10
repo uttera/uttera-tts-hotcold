@@ -122,14 +122,17 @@ while True:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
             temp_path = f.name
 
-        tts.tts_to_file(
-            text=text,
-            speaker_wav=speaker_wav,
-            language=language,
-            file_path=temp_path,
-            speed=speed,
-            **params,
-        )
+        # autocast resolves fp32/fp16 type mismatches (speaker conditioning computes
+        # in fp32; autocast casts inputs to fp16 to match the converted model weights).
+        with torch.autocast("cuda", dtype=torch.float16, enabled=_use_fp16):
+            tts.tts_to_file(
+                text=text,
+                speaker_wav=speaker_wav,
+                language=language,
+                file_path=temp_path,
+                speed=speed,
+                **params,
+            )
 
         with open(temp_path, "rb") as f:
             audio_bytes = f.read()
