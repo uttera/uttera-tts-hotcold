@@ -173,7 +173,7 @@ HOT_QUEUE_SAFETY_FACTOR = float(os.environ.get("HOT_QUEUE_SAFETY_FACTOR", "0.8")
 # Minimum free VRAM (GB) to spawn a cold worker. 0 = disable check.
 MIN_COLD_VRAM_GB = float(os.environ.get("MIN_COLD_VRAM_GB", "2.5"))
 
-SERVER_VERSION = "1.6.0"
+SERVER_VERSION = "1.6.1"
 
 # -------------------------------
 # 2. Voice Mapping
