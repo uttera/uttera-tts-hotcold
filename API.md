@@ -22,7 +22,7 @@ Generates audio from input text using the specified voice and personality parame
 | :--- | :--- | :--- | :--- |
 | `input` | String | **Required** | The text to be synthesized. |
 | `model` | String | `tts-1` | Model identifier (OpenAI compatible). |
-| `voice` | String | `alloy` | Voice ID (e.g., `assistant`, `voice-c`, `a voice`). |
+| `voice` | String | `alloy` | Voice ID from `voices.json` (e.g., `alloy`, `echo`, `nova`). |
 | `response_format`| String | `mp3` | Output format: `mp3`, `wav`, `opus`, `flac`. |
 | `speed` | Float | `1.0` | Synthesis speed (0.5 to 2.0). |
 | `language` | String | `en` | Language code (e.g., `en`, `es`, `fr`). |
@@ -43,7 +43,7 @@ curl -X POST "http://localhost:5100/v1/audio/speech/stream" \
      -H "Content-Type: application/json" \
      -d '{
        "input": "I am generating this audio in real time.",
-       "voice": "narrator"
+       "voice": "alloy"
      }' --output stream.wav
 ```
 
@@ -57,7 +57,7 @@ curl -X POST "http://localhost:5100/v1/audio/speech" \
      -H "Content-Type: application/json" \
      -d '{
        "input": "Hello sir, the system is operational.",
-       "voice": "narrator",
+       "voice": "alloy",
        "language": "en",
        "temperature": 0.85
      }' --output speech.mp3
@@ -67,7 +67,7 @@ curl -X POST "http://localhost:5100/v1/audio/speech" \
 ```bash
 curl -X POST "http://localhost:5100/v1/audio/speech" \
      -F "input=Señor, el análisis ha terminado." \
-     -F "voice=assistant" \
+     -F "voice=alloy" \
      -F "language=es" \
      -F "temperature=0.5" \
      --output speech.mp3
@@ -128,10 +128,30 @@ curl -X GET "http://localhost:5100/health"
 ```json
 {
   "status": "ok",
-  "version": "1.4.10",
+  "version": "1.7.0",
   "model": "tts_models/multilingual/multi-dataset/xtts_v2",
+  "precision": "fp32",
   "hot_worker_loaded": true,
-  "hot_worker_error": null
+  "hot_worker_error": null,
+  "routing": {
+    "load_score": 0.0,
+    "accepts_requests": true
+  },
+  "smart_routing": {
+    "ema_spw": 0.3931,
+    "cold_start_calibrated": true,
+    "cold_ema_start_seconds": 11.18,
+    "queue_depth": 0,
+    "queue_words": 0.0,
+    "queue_drain_estimate_seconds": 0.0,
+    "pool_workers_active": 0,
+    "pool_workers_loading": 0,
+    "pool_workers_optimal": 0,
+    "pool_size_cap": 6,
+    "vram_free_gb": 20.02,
+    "cold_vram_ema_gb": 2.29,
+    "vram_sufficient_for_cold": true
+  }
 }
 ```
 
@@ -167,6 +187,7 @@ curl -X GET "http://localhost:5100/v1/voices"
 **Example Response:**
 ```json
 {
-  "voices": ["alloy", "voice-d", "echo", "fable", "voice-b", "voice-e", "voice-c", "narrator", "voice-g", "nova", "onyx", "voice-h", "voice-a", "shimmer", "voice-f"]
+  "voices": ["alloy", "echo", "fable", "nova", "onyx", "shimmer"]
 }
 ```
+*The list depends on the contents of `voices.json`. Custom voices can be added without modifying application code.*

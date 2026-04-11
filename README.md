@@ -34,10 +34,10 @@ This server uses **Coqui TTS**, which is released under various licenses dependi
 ### 1. Prerequisites (Debian/Ubuntu)
 Install the following system dependencies first:
 ```bash
-sudo apt update && sudo apt install -y espeak-ng curl file ffmpeg python3.12 python3.12-venv
+sudo apt update && sudo apt install -y espeak-ng curl file ffmpeg python3 python3-venv
 ```
 
-> **Python version:** `setup.sh` requires **Python 3.12**. Python 3.13+ has no prebuilt wheels for `torch==2.9.0` or `torchcodec==0.8.1`. On systems where Python 3.12 is not the default (e.g. Ubuntu 24.10 with Python 3.14), the package above installs it alongside the system Python.
+> **Python version:** `setup.sh` uses the system default `python3` (3.12+ recommended). torch is pinned to `>=2.9.0,<2.10.0` to avoid CUDA 13 NPP dependency issues with newer versions.
 
 ### 2. Unified Installation
 ```bash
@@ -59,8 +59,8 @@ sudo usermod -aG render $USER
 The server listens on port `5100` by default. Ensure the user has permissions to open sockets on this port (standard for ports >1024).
 
 ### 4. Vocal Provisioning
-- **Standard Voices**: The server automatically provisions the 6 standard OpenAI identities (Alloy, Echo, Fable, Onyx, Nova, Shimmer) during setup.
-- **Elite/Custom Voices**: Reference voice files (.wav) for custom cloning are **not provided** due to copyright. Place your samples in `assets/voices/elite/` within the project directory.
+- **Standard Voices**: `setup_assets.sh` provisions the 6 standard OpenAI identities (Alloy, Echo, Fable, Onyx, Nova, Shimmer) into `assets/voices/standard/`.
+- **Custom Voices**: Place additional `.wav` reference files in `assets/voices/` and register them in `voices.json`. No code changes required.
 - Refer to [CLONE_VOICES.md](./CLONE_VOICES.md) for instructions on creating high-quality reference files.
 
 ## 🎭 Personality Tuning & Parameters
@@ -116,13 +116,21 @@ The server includes a `.env.example` file. You can create a **`.env`** file in t
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `TTS_MODEL` | `xtts_v2` | Model name to pre-load into the Hot Worker. |
+| `COQUI_PRECISION` | `fp32` | Model precision: `fp32`, `fp16`, or `bf16`. |
 | `DEFAULT_LANGUAGE` | `en` | Default language if not specified in the request. |
 | `CACHE_TTL_MINUTES` | `10080` (7 days) | Cache file expiration. Set to `0` to disable. |
-| `COLD_LANE_TIMEOUT_SECONDS` | `120` | Max time to wait for a Cold Lane subprocess before killing it and returning HTTP 500. |
+| `COLD_POOL_SIZE` | `6` | Max concurrent cold workers (safety cap). |
+| `COLD_WORKER_IDLE_TIMEOUT` | `60` | Seconds before idle cold worker exits. |
+| `COLD_WORKER_IDLE_STAGGER` | `10` | Stagger per worker slot to avoid mass die-off. |
+| `MIN_COLD_VRAM_GB` | `2.5` | Min free VRAM to spawn a cold worker (0=disable). |
+| `ROUTING_DRAIN_CAP_SECONDS` | `120` | Queue drain time considered 100% load. |
+| `REDIS_URL` | *(empty)* | Redis URL for node self-registration (opt-in). |
+| `NODE_HOST` | `localhost` | Host advertised to Redis for Gatekeeper routing. |
+| `NODE_PORT` | `5100` | Port advertised to Redis for Gatekeeper routing. |
 | `DEBUG` | `false` | Set to `true` to enable worker routing traces. |
 | `VENV_PYTHON` | *(auto-detected)* | Absolute path to the venv Python executable. |
 
-*Note: All personality parameters listed in the section above can also be set via their respective `DEFAULT_*` environment variables.*
+*See `.env.example` for the full list including personality defaults (`DEFAULT_TEMPERATURE`, etc.).*
 
 ### 3. User Service (systemd --user)
 1. Create directory if it doesn't exist: `mkdir -p ~/.config/systemd/user`
@@ -229,11 +237,12 @@ By default, the server binds to **`127.0.0.1`** on port **`5100`**.
 - To allow external network access, modify the `--host` parameter to `0.0.0.0` in the execution command or systemd unit.
 - **WARNING**: This API **does not have authentication**. Exposing it to the network via `0.0.0.0` represents a security risk. Ensure the server is protected by a firewall or operating within a secure VPN/Local Network.
 
-## 📊 Performance (NVIDIA RTX 5090)
-| Task | Latency (Hot Lane) | Latency (Cold Lane) |
-| :--- | :--- | :--- |
-| Short Response (XTTSv2) | **~1.0s** | ~19s (Cold load) |
-| Cached Response | **<0.02s** | <0.02s |
+## 📊 Performance (NVIDIA RTX 5090, fp32)
+| Task | Latency |
+| :--- | :--- |
+| Single request (Hot Lane) | **~1.0s** |
+| Cached response | **<0.02s** |
+| 160 concurrent requests | 99.3s total, 1.61 req/s, **0 failures** |
 
 ## 🛡 License
 GNU GPL v3. Maintainers: Hugo L. Espuny & Uttera

@@ -12,8 +12,16 @@ services:
     environment:
       - TTS_MODEL=tts_models/multilingual/multi-dataset/xtts_v2
       - TTS_HOME=/app/assets/models
+      - VOICE_ASSET_DIR=/app/assets/voices
+      - COQUI_PRECISION=fp32
+      - COLD_POOL_SIZE=6
+      - COLD_WORKER_IDLE_TIMEOUT=60
+      - COLD_WORKER_IDLE_STAGGER=10
       - DEBUG=false
       - COQUI_TOS_AGREED=1
+      # - REDIS_URL=redis://redis:6379
+      # - NODE_HOST=coqui-tts-server
+      # - NODE_PORT=5100
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     devices:
