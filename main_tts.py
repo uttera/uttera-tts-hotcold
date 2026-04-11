@@ -257,13 +257,15 @@ else:
     VOICE_MAP = {"alloy": "standard/alloy.wav"}
     print("VOICES: No voices.json found — using default (alloy only)", flush=True)
 
+DEFAULT_VOICE = os.environ.get("DEFAULT_VOICE", "alloy")
+
 # -------------------------------
 # 3. OpenAI Schema Models
 # -------------------------------
 class SpeechRequest(BaseModel):
     model: str = "tts-1"
     input: str
-    voice: str = "alloy"
+    voice: str = DEFAULT_VOICE
     response_format: str = "mp3"
     speed: float = 1.0
     language: str = os.environ.get("DEFAULT_LANGUAGE", "en")
@@ -936,7 +938,7 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         form_data = await request.form()
         req = SpeechRequest(
             input=form_data.get("input"),
-            voice=form_data.get("voice", "alloy"),
+            voice=form_data.get("voice", DEFAULT_VOICE),
             response_format=form_data.get("response_format", "mp3"),
             speed=float(form_data.get("speed", 1.0)),
             language=form_data.get("language", os.environ.get("DEFAULT_LANGUAGE", "en")),
@@ -963,11 +965,11 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         speaker_wav = custom_wav_path
         voice_id = hashlib.md5(custom_wav_path.encode()).hexdigest()
     else:
-        v_file = VOICE_MAP.get(req.voice.lower(), VOICE_MAP["alloy"])
+        v_file = VOICE_MAP.get(req.voice.lower(), VOICE_MAP[DEFAULT_VOICE])
         speaker_wav = os.path.join(VOICE_ASSET_DIR, v_file)
         voice_id = req.voice.lower()
         if not os.path.exists(speaker_wav):
-            speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
+            speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP[DEFAULT_VOICE])
 
     params = {
         "temperature":        req.temperature,
@@ -1114,7 +1116,7 @@ async def create_speech_stream(request: Request):
         form_data = await request.form()
         req = SpeechRequest(
             input=form_data.get("input"),
-            voice=form_data.get("voice", "alloy"),
+            voice=form_data.get("voice", DEFAULT_VOICE),
             response_format="wav",
             speed=float(form_data.get("speed", 1.0)),
             language=form_data.get("language", os.environ.get("DEFAULT_LANGUAGE", "en")),
@@ -1130,10 +1132,10 @@ async def create_speech_stream(request: Request):
     if not model_lock.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="Hot worker busy. Use /v1/audio/speech for queued synthesis.")
 
-    v_file = VOICE_MAP.get(req.voice.lower(), VOICE_MAP["alloy"])
+    v_file = VOICE_MAP.get(req.voice.lower(), VOICE_MAP[DEFAULT_VOICE])
     speaker_wav = os.path.join(VOICE_ASSET_DIR, v_file)
     if not os.path.exists(speaker_wav):
-        speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP["alloy"])
+        speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP[DEFAULT_VOICE])
 
     params = {
         "temperature": req.temperature, "length_penalty": req.length_penalty,
