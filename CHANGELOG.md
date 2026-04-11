@@ -5,23 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased — experimental-py311]
+## [1.7.0] - 2026-04-10
 
 ### Changed
-- **Python 3.11 as recommended runtime:** `setup.sh` (v1.1.4) now targets Python 3.11 instead of
-  Python 3.12. Measured VRAM footprint with identical torch==2.9.0+cu128 + TTS 0.27.5 stack:
-  **Python 3.11 = 4362 MiB vs Python 3.13 = 8132 MiB** (−3.77 GB per instance). This difference
-  is structural (not runtime accumulation) — confirmed by clean restarts with empty cache at both
-  versions. Python 3.11.15 confirmed compatible with the full dependency tree.
-  Install: `sudo apt install python3.11 python3.11-venv python3.11-dev`
+- **External voice mapping:** `VOICE_MAP` is now loaded from `voices.json` at startup instead of
+  being hardcoded in `main_tts.py`. Format: `{"name": "subdir/file.wav"}`. Search order:
+  `VOICE_ASSET_DIR/voices.json`, then `BASE_DIR/voices.json` (repo root). Falls back to
+  `{"alloy": "standard/alloy.wav"}` if neither exists. Custom deployments can add voices by
+  editing `voices.json` without touching application code.
+- **`COQUI_PRECISION` replaces `COQUI_FP16`:** New env var accepts `fp32`, `fp16`, or `bf16`.
+  Legacy `COQUI_FP16=1` still works (maps to `fp16`). Default is `fp32`.
+  - **bf16 mode:** Converts model weights to bfloat16 (except HiFiGAN vocoder which needs fp32
+    for cuFFT). Uses `torch.autocast` for inference. Includes monkey-patch for
+    `torch.Tensor.numpy` (numpy has no bf16 dtype).
+  - **Benchmark (160 concurrent, RTX 5090):** bf16 saves ~0.7 GB VRAM per worker and is 42%
+    faster per-word on individual requests, but 7% slower in total throughput under full load
+    due to autocast overhead in FFT operations. fp32 recommended for production.
+- **Health endpoint:** `"fp16"` field replaced by `"precision"` (string: `"fp32"`, `"fp16"`, or `"bf16"`).
+- **Dependency pins:** `torch>=2.9.0,<2.10.0`, `torchaudio>=2.9.0,<2.10.0`,
+  `torchcodec>=0.8.1,<0.9.0`. Torch 2.10+ switches torchaudio to a torchcodec-only backend
+  requiring CUDA 13 NPP libraries not yet widely available on systems with CUDA 12 toolkit.
+- **Python 3.11 restriction removed:** Testing confirmed no VRAM benefit vs Python 3.12.
+  The `experimental-py311` branch has been merged and deleted.
 
 ### Validated
-- 40-clip Spanish stress test (same test vectors as v1.5.7 validation) against Python 3.11 server
-  (venv311, clean cache): **40/40 OK, 0 errores**. Latency avg=22.88s, min=3.16s, max=51.74s.
-  Audio quality identical. Cold EMA calibrated at 22.76s. VRAM grew only 0.36 GB over the full
-  run (10.25 → 9.89 GB free). Functionally equivalent to Python 3.13 results (avg 23.35s).
+- 160-concurrent stress test (fp32): **160/160 OK, 0 failures.** 99.3s total, 1.61 req/s.
+- 160-concurrent stress test (bf16): **160/160 OK, 0 failures.** 106.1s total, 1.50 req/s.
 
----
+## [1.6.4] - 2026-04-10
+
+### Added
+- **Redis self-registration:** Each tick of `_cold_pool_manager` publishes
+  `{load_score, accepts_requests, host, port, version, ts}` to `tts:nodes:{NODE_ID}`
+  with TTL = 3 × pool manager interval. Opt-in via `REDIS_URL` env var; silently disabled
+  if unset or unreachable. Key deleted on clean shutdown. Adds `redis[asyncio]>=5.0.0`
+  to requirements.
+
+## [1.6.3] - 2026-04-10
+
+### Added
+- **Routing fields in `/health`:** `routing.load_score` (0–1, based on queue drain estimate
+  divided by `ROUTING_DRAIN_CAP_SECONDS`, default 120) and `routing.accepts_requests`
+  (false when model not loaded, errored, or score = 1.0). Designed for front-end router
+  (OpenResty Gatekeeper) node selection.
+
+## [1.6.2] - 2026-04-10
+
+### Changed
+- **`/health` schema aligned with whisper-stt-local-server.** Renamed:
+  `cold_pool_size` → `pool_workers_active`, `cold_pool_loading` → `pool_workers_loading`.
+  Added: `queue_depth`, `queue_drain_estimate_seconds`, `pool_workers_optimal`,
+  `pool_size_cap`, `vram_sufficient_for_cold`.
+
+## [1.6.1] - 2026-04-09
+
+### Fixed
+- **Retried-item routing loop:** Cold pool workers now skip items with `retried=True`
+  (put back on queue) so only the hot worker processes them. Previously, a retried item
+  could bounce between cold workers indefinitely (N cold : 1 hot probability), causing
+  multiple cold failures before the hot worker picked it up.
+- **Empty input crash:** Requests with empty or whitespace-only `input` now return HTTP 422
+  instead of reaching `synthesizer.tts()` which raises `UnboundLocalError` on empty text.
+
+## [1.6.0] - 2026-04-09
+
+### Changed
+- **Shared work queue + persistent cold worker pool.** Replaces the Branch A/B/C
+  spawn-and-die architecture (v1.5.x) with a persistent pool of XTTS-v2 subprocesses
+  (`cold_worker_tts.py`) that serve multiple requests without reloading the model
+  (~30s saved per request after the first).
+- All synthesis requests enqueue to a single `asyncio.Queue` consumed by the hot worker
+  and all pool workers in parallel. Pool size is computed dynamically every 0.5s via
+  `_optimal_cold_workers()` using the live queue depth (words) and EMAs.
+- Idle workers wind down with staggered timeouts (first spawned lives longest).
+- Cold EMA warmup at startup: a real synthesis runs through a fresh cold worker to
+  measure startup time and VRAM cost, then kills the worker before entering steady state.
+- Added `COQUI_FP16` option: fp16 + LayerNorm-in-fp32 halves VRAM per worker
+  (~3.5 → ~1.75 GB). Superseded by `COQUI_PRECISION` in v1.7.0; `COQUI_FP16=1` still works.
+- Crash fallback preserved: failed pool worker re-queues item to hot lane
+  (`X-Route: COLD-POOL>HOT`). Zero HTTP 500 from worker crashes.
 
 ## [1.5.7] - 2026-04-07
 
