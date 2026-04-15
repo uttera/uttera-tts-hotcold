@@ -1,18 +1,41 @@
 # coqui-tts-local-server
 
 <p align="center">
-  <img src="docs/img/social-preview.png" alt="Coqui TTS Local Server" width="800">
+  <img src="docs/img/banner.png" alt="uttera.ai — The voice layer for your AI" width="800">
 </p>
 
-High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architecture. 
+High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architecture.
 
 **Ideal for locally running installations of agents like OpenClaw or Open-WebUI, where the media should not leave the private local domain.**
 
-## ⚖️ License & Terms of Service (IMPORTANT)
+> **Created and maintained by [Hugo L. Espuny](https://github.com/fakehec).**
+> Part of the [Uttera](https://uttera.ai) voice stack.
+> Source code licensed under the [Apache License 2.0](LICENSE).
+> See [NOTICE](NOTICE) for third-party attributions.
 
-This server uses **Coqui TTS**, which is released under various licenses depending on the model.
-- **XTTS v2** and several other models are released under the **Coqui Public Model License (CPML)**.
-- **NON-COMMERCIAL USE ONLY**: Usage is free for personal and non-commercial projects.
+## 📢 Heads-up: this project is being renamed
+
+This repository will soon be renamed to **`uttera-tts-hotcold`** and
+transferred to the [Uttera GitHub organization](https://github.com/uttera).
+GitHub will automatically redirect the old URL, so any existing clones,
+forks, and links will continue to work.
+
+Upcoming in the next major release (v2.0.0):
+
+- **Plugin backend architecture**: the server will support multiple TTS
+  models (Coqui XTTS-v2 today, VoxCPM2 soon, others easily added) via a
+  single `TTS_BACKEND` env var.
+- **Apache-2.0 relicensing** (this release already applies that change).
+
+## ⚖️ License & model licensing (IMPORTANT)
+
+**Server source code** (this repository): Apache License 2.0. See
+[LICENSE](LICENSE). Commercial use permitted.
+
+**Default TTS model (XTTS-v2)**: released by Coqui under the Coqui Public
+Model License (CPML).
+- **NON-COMMERCIAL USE ONLY**: the XTTS-v2 weights are free for personal
+  and non-commercial projects.
 - **COMMERCIAL USE**: If you intend to use this for commercial purposes, you **must** purchase a commercial license from Coqui (licensing@coqui.ai).
 - By running the installation scripts, you acknowledge and agree to these terms.
 
