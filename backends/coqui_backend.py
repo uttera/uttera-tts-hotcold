@@ -247,24 +247,3 @@ class Backend(TTSBackend):
     def supported_languages(self) -> list[str]:
         """Return the list of XTTS-v2 language codes."""
         return list(XTTS_V2_LANGUAGES)
-
-    # ------------------------------------------------------------------
-    # Coqui-specific accessors (used only by the hot lane streaming code
-    # path and by cold_worker_tts.py during the refactor; they are NOT
-    # part of the TTSBackend contract and should not be relied upon by
-    # generic server code).
-    # ------------------------------------------------------------------
-
-    @property
-    def raw_worker(self):
-        """Expose the underlying `TTS` object for legacy call-sites.
-
-        TODO (remove after cold_worker_tts.py is wired through the
-        factory): cold_worker still needs the raw Coqui API. New code
-        should use `infer()` / `infer_stream()` exclusively.
-        """
-        return self._worker
-
-    @property
-    def precision(self) -> str:
-        return self._precision
