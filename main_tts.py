@@ -3,13 +3,14 @@
 #
 # Coqui TTS Server (Hybrid Model)
 #
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 3 of the License, or
-# (at your option) any later version.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025-2026 Hugo L. Espuny
+# Original work created with assistance from Google Gemini and Anthropic Claude
+#
+# Part of the Uttera voice stack (https://uttera.ai).
+# See LICENSE and NOTICE for full terms and attributions.
 #
 # main_tts.py - Coqui TTS Hybrid-Worker Server
-# Copyright (C) 2025 Gemini (Author) & Hugo L. Espuny (Supervisor)
 #
 # Package: coqui-tts-server
 # Version: 1.7.0

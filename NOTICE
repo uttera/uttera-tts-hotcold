@@ -1,0 +1,80 @@
+uttera-tts-hotcold (coqui-tts-local-server)
+Copyright 2025-2026 Hugo L. Espuny
+
+Created and originally developed by Hugo L. Espuny <https://github.com/fakehec>.
+Part of the Uttera voice stack <https://uttera.ai>.
+
+Licensed under the Apache License, Version 2.0. See LICENSE for details.
+
+================================================================================
+Third-party software and models used by this project
+================================================================================
+
+This product includes software and models developed by third parties. Their
+licenses apply to the respective components. You are responsible for
+complying with all applicable licenses when you deploy this server.
+
+--------------------------------------------------------------------------------
+Coqui TTS (library)
+  Source:   https://github.com/coqui-ai/TTS
+  License:  Mozilla Public License 2.0 (MPL-2.0)
+  URL:      https://www.mozilla.org/en-US/MPL/2.0/
+
+  This project uses the Coqui TTS Python library as a runtime dependency.
+  No Coqui TTS source code is bundled in this repository; it is installed
+  as a pip dependency at setup time.
+
+--------------------------------------------------------------------------------
+XTTS-v2 (model weights — default TTS model)
+  Source:   https://huggingface.co/coqui/XTTS-v2
+  License:  Coqui Public Model License (CPML)
+  URL:      https://coqui.ai/cpml
+
+  >>> IMPORTANT <<<
+  XTTS-v2 model weights are released under the Coqui Public Model License,
+  which RESTRICTS USE TO NON-COMMERCIAL PURPOSES. Before deploying this
+  server in any commercial context, you MUST either:
+    (a) obtain a commercial license from Coqui (licensing@coqui.ai), or
+    (b) configure this server with a commercially-licensed TTS model such
+        as VoxCPM2 (Apache-2.0) — available through the Uttera TTS plugin
+        architecture in future releases.
+
+  The CPML restriction applies to the MODEL WEIGHTS only, not to this
+  server's source code (which is Apache-2.0).
+
+--------------------------------------------------------------------------------
+PyTorch
+  Source:   https://github.com/pytorch/pytorch
+  License:  BSD 3-Clause
+  URL:      https://github.com/pytorch/pytorch/blob/main/LICENSE
+
+  Used as a runtime dependency for GPU inference.
+
+--------------------------------------------------------------------------------
+FastAPI
+  Source:   https://github.com/fastapi/fastapi
+  License:  MIT
+  URL:      https://github.com/fastapi/fastapi/blob/master/LICENSE
+
+  HTTP framework used by this server.
+
+--------------------------------------------------------------------------------
+Uvicorn
+  Source:   https://github.com/encode/uvicorn
+  License:  BSD 3-Clause
+  URL:      https://github.com/encode/uvicorn/blob/master/LICENSE.md
+
+  ASGI server used to run this service.
+
+--------------------------------------------------------------------------------
+redis-py (optional, used when REDIS_URL is set)
+  Source:   https://github.com/redis/redis-py
+  License:  MIT
+  URL:      https://github.com/redis/redis-py/blob/master/LICENSE
+
+  Used for optional cluster self-registration.
+
+--------------------------------------------------------------------------------
+Additional transitive dependencies
+  A full list of transitive dependencies and their licenses can be generated
+  with `pip-licenses` or `pipdeptree` after installation.
