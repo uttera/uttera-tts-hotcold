@@ -13,19 +13,28 @@ High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architectu
 > Source code licensed under the [Apache License 2.0](LICENSE).
 > See [NOTICE](NOTICE) for third-party attributions.
 
-## 📢 Heads-up: this project is being renamed
+## 📢 Project history: renamed and transferred
 
-This repository will soon be renamed to **`uttera-tts-hotcold`** and
-transferred to the [Uttera GitHub organization](https://github.com/uttera).
-GitHub will automatically redirect the old URL, so any existing clones,
-forks, and links will continue to work.
+This repository has been **renamed** from `coqui-tts-local-server` to
+**`uttera-tts-hotcold`** and **transferred** from its original creator's
+personal page ([@fakehec](https://github.com/fakehec)) to the
+[Uttera GitHub organization](https://github.com/uttera).
+
+GitHub redirects old URLs automatically, so any existing clones, forks,
+bookmarks, and links keep working. If you still have
+`fakehec/coqui-tts-local-server` as your `origin`, consider updating:
+
+```bash
+git remote set-url origin https://github.com/uttera/uttera-tts-hotcold.git
+```
 
 Upcoming in the next major release (v2.0.0):
 
 - **Plugin backend architecture**: the server will support multiple TTS
   models (Coqui XTTS-v2 today, VoxCPM2 soon, others easily added) via a
   single `TTS_BACKEND` env var.
-- **Apache-2.0 relicensing** (this release already applies that change).
+- **Apache-2.0 relicensing** — already applied in `master`; see
+  [HISTORY.md](HISTORY.md) and [NOTICE](NOTICE).
 
 ## ⚖️ License & model licensing (IMPORTANT)
 
@@ -64,8 +73,8 @@ sudo apt update && sudo apt install -y espeak-ng curl file ffmpeg python3 python
 
 ### 2. Unified Installation
 ```bash
-git clone https://github.com/fakehec/coqui-tts-local-server.git
-cd coqui-tts-local-server
+git clone https://github.com/uttera/uttera-tts-hotcold.git
+cd uttera-tts-hotcold
 chmod +x setup.sh
 ./setup.sh
 ```
@@ -157,18 +166,18 @@ The server includes a `.env.example` file. You can create a **`.env`** file in t
 
 ### 3. User Service (systemd --user)
 1. Create directory if it doesn't exist: `mkdir -p ~/.config/systemd/user`
-2. Create: `~/.config/systemd/user/coqui-tts.service`
+2. Create: `~/.config/systemd/user/uttera-tts.service`
 3. Configuration (all environment variables are loaded from your `.env` file):
 
 ```ini
 [Unit]
-Description=Coqui TTS Local Server
+Description=Uttera TTS Hot/Cold Server
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/coqui-tts-local-server
-ExecStart=%h/coqui-tts-local-server/venv/bin/uvicorn main_tts:app --host 127.0.0.1 --port 5100
+WorkingDirectory=%h/uttera-tts-hotcold
+ExecStart=%h/uttera-tts-hotcold/venv/bin/uvicorn main_tts:app --host 127.0.0.1 --port 5100
 Restart=always
 RestartSec=5
 
@@ -179,7 +188,7 @@ WantedBy=default.target
 4. Enable and start:
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now coqui-tts.service
+systemctl --user enable --now uttera-tts.service
 ```
 
 ## 🐳 Docker

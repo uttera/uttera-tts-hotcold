@@ -1,0 +1,11 @@
+name: "Uttera TTS (Hot/Cold)"
+website_url: "https://github.com/uttera/uttera-tts-hotcold"
+source_code_url: "https://github.com/uttera/uttera-tts-hotcold"
+description: "High-performance TTS API server with a hybrid Hot/Cold worker architecture. Part of the Uttera voice stack. Coqui XTTS-v2 backend today; plugin architecture for additional TTS models coming."
+licenses:
+  - Apache-2.0
+platforms:
+  - Python
+  - Docker
+tags:
+  - Generative Artificial Intelligence (GenAI)
