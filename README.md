@@ -276,3 +276,11 @@ If this project is useful to you, consider supporting its development:
 
 - **Bitcoin (BTC):** `38jJyMomtUqhCjuNJ9VxKpgEyMyx37Zqix`
 - **Monero (XMR):** `82bbUZdkMXUPAma4ioTuZNcJgTh8YTv4XNUwPy6T28kYJWCfeGgV79AZb7amCszFXeBaa5u595cQBVjFS4PkBGim56ap7Ej`
+
+---
+
+*Uttera /ˈʌt.ər.ə/ — from the English verb "to utter" (to speak aloud, to
+pronounce, to give audible expression to). Also the backronym **U**niversal
+**T**ext **T**ransformer **E**ngine for **R**ealtime **A**I — reflecting the
+project's origin as a Whisper server and its underlying Transformer
+architecture.*

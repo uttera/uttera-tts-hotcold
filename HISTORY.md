@@ -36,6 +36,15 @@ Coqui's XTTS-v2 for TTS. But neither scaled gracefully to server-side
 concurrency on consumer-class GPUs. They were designed for one-shot local
 invocation, not for being hit by a busy frontend.
 
+The first server written was in fact the Whisper one: a **Transformer-based
+speech-to-text engine** wrapped in a hot/cold pool. The TTS companion came
+a few weeks later, once the concurrency pattern proved itself. The name
+**Uttera** reflects both heritages — from the English verb *"to utter"* (to
+speak aloud, to pronounce), and as a fitting backronym: **U**niversal
+**T**ext **T**ransformer **E**ngine for **R**ealtime **A**I. The project
+was a Transformer-based server before the name existed; the name caught up
+to the product.
+
 ## The hot/cold architecture is born
 
 The original design goal was specific and constrained:
