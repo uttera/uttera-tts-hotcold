@@ -21,10 +21,18 @@ from __future__ import annotations
 
 import os
 import struct
+import sys
 import tempfile
 from typing import Iterator
 
 from backends.base import TTSBackend
+
+
+def print_err(*args, **kwargs):
+    """Log to stderr so cold workers do not corrupt the stdout JSON protocol."""
+    kwargs.setdefault("file", sys.stderr)
+    kwargs.setdefault("flush", True)
+    print(*args, **kwargs)
 
 
 # XTTS-v2 language codes. Static list — see Coqui docs.
@@ -92,14 +100,14 @@ class Backend(TTSBackend):
                 f"(got '{precision}')."
             )
         if device.startswith("cuda") and not torch.cuda.is_available():
-            print(
+            print_err(
                 "COQUI BACKEND: CUDA requested but unavailable — falling "
                 "back to CPU.",
                 flush=True,
             )
             device = "cpu"
 
-        print(f"COQUI BACKEND: loading {self._model_name} on {device}...", flush=True)
+        print_err(f"COQUI BACKEND: loading {self._model_name} on {device}...", flush=True)
         torch.backends.cudnn.benchmark = True
 
         worker = TTS(model_name=self._model_name, progress_bar=False)
@@ -120,13 +128,13 @@ class Backend(TTSBackend):
                 worker.synthesizer.tts_model.hifigan_decoder = (
                     worker.synthesizer.tts_model.hifigan_decoder.float()
                 )
-            print(f"COQUI BACKEND: {precision} applied.", flush=True)
+            print_err(f"COQUI BACKEND: {precision} applied.", flush=True)
 
         self._worker = worker
         self._device = device
         self._precision = precision
         self._loaded = True
-        print("COQUI BACKEND: ready.", flush=True)
+        print_err("COQUI BACKEND: ready.", flush=True)
 
     def infer(
         self,
