@@ -1,0 +1,80 @@
+name: Bug report
+description: Report a problem with the server
+title: "[bug] <short description>"
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please fill in the fields below so the
+        maintainer can reproduce the issue quickly.
+
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: "Output of `curl http://localhost:5100/health | jq -r .server_version`"
+      placeholder: "1.7.1"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.3"
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU model and driver
+      placeholder: "RTX 5090, driver 575.01"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal sequence of commands that triggers the bug.
+      placeholder: |
+        1. Start the server with `...`
+        2. Send request `curl ... `
+        3. Observe response / error / crash
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Paste any relevant output from the server or client.
+        REDACT sensitive information (API keys, personal data) before posting.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I am using a supported version of the server.
+          required: true

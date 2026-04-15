@@ -1,0 +1,47 @@
+name: Feature request
+description: Propose a new feature or enhancement
+title: "[feature] <short description>"
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature. Describe the use case first and the
+        suggested solution second — it helps reviewers think about
+        alternatives.
+
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Use case
+      description: What are you trying to accomplish? Why is the current behavior insufficient?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you implement this?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about and why they don't fit.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This is a backwards-compatible change.
+        - label: This introduces a breaking change (explain below).
+        - label: This requires new dependencies.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
