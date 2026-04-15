@@ -1,4 +1,4 @@
-# coqui-tts-local-server
+# uttera-tts-hotcold
 
 <p align="center">
   <img src="docs/img/banner.png" alt="uttera.ai — The voice layer for your AI" width="800">
@@ -268,14 +268,27 @@ By default, the server binds to **`127.0.0.1`** on port **`5100`**.
 | 160 concurrent requests | 99.3s total, 1.61 req/s, **0 failures** |
 
 ## 🛡 License
-GNU GPL v3. Maintainers: Hugo L. Espuny & Uttera
 
-## ☕ Support
+**Server source code**: [Apache License 2.0](LICENSE). Commercial use permitted.
 
-If this project is useful to you, consider supporting its development:
+**Default TTS model (XTTS-v2)**: released by Coqui under the Coqui Public
+Model License (CPML) — **non-commercial only**. See [NOTICE](NOTICE) and the
+license section at the top of this README for details and commercial
+alternatives.
 
-- **Bitcoin (BTC):** `38jJyMomtUqhCjuNJ9VxKpgEyMyx37Zqix`
-- **Monero (XMR):** `82bbUZdkMXUPAma4ioTuZNcJgTh8YTv4XNUwPy6T28kYJWCfeGgV79AZb7amCszFXeBaa5u595cQBVjFS4PkBGim56ap7Ej`
+Created and maintained by [Hugo L. Espuny](https://github.com/fakehec),
+with contributions acknowledged in [AUTHORS.md](AUTHORS.md).
+
+## ☕ Community
+
+If you want to follow the project or get involved:
+
+- ⭐ Star this repo to help discoverability.
+- 🐛 Report issues via the [issue tracker](../../issues).
+- 💬 Join the conversation in [Discussions](../../discussions).
+- 📰 Technical posts at [blog.uttera.ai](https://blog.uttera.ai).
+- 🌐 Uttera Cloud: [https://uttera.ai](https://uttera.ai) (EU-hosted,
+  solar-powered, subscription flat-rate).
 
 ---
 
