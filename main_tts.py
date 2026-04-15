@@ -149,8 +149,11 @@ except ImportError:
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request, BackgroundTasks
 from pydantic import BaseModel
 from fastapi.responses import FileResponse, StreamingResponse
-from TTS.api import TTS
 import torch
+
+# Plugin-based TTS backends — TTS_BACKEND env var selects the implementation
+# (default "coqui"). See backends/__init__.py and backends/base.py.
+from backends import load_backend, TTSBackend
 
 # Monkey-patch: numpy() does not support bf16; auto-convert to fp32.
 _orig_numpy = torch.Tensor.numpy
@@ -277,36 +280,40 @@ class SpeechRequest(BaseModel):
     top_p: float = float(os.environ.get("DEFAULT_TOP_P", 0.85))
 
 # -------------------------------
-# 4. Hot Model Loading
+# 4. Hot Model Loading (through backend plugin)
 # -------------------------------
 model_lock = threading.Lock()   # Serializes hot worker + streaming endpoint
-tts_hot_worker = None
+_backend: Optional[TTSBackend] = None
 hot_worker_error: Optional[str] = None
 
+
+def _hot_worker_ready() -> bool:
+    """True if the backend is loaded and usable."""
+    return _backend is not None and hot_worker_error is None
+
+
 def _load_hot_model():
-    """Load XTTS-v2 and optionally convert to fp16/bf16. Called once at startup."""
-    global tts_hot_worker, hot_worker_error
-    print(f"HOT WORKER: Loading {MODEL_NAME}...", flush=True)
+    """Instantiate and load the configured TTS backend. Called once at startup.
+
+    Backend selection is via the TTS_BACKEND env var (default: coqui).
+    Precision (fp32/fp16/bf16) is still controlled by COQUI_PRECISION for
+    backward compatibility with existing deployments.
+    """
+    global _backend, hot_worker_error
     try:
-        torch.backends.cudnn.benchmark = True
-        worker = TTS(model_name=MODEL_NAME, progress_bar=False)
-        worker.to("cuda" if torch.cuda.is_available() else "cpu")
-        if COQUI_PRECISION != "fp32" and torch.cuda.is_available():
-            if COQUI_PRECISION == "fp16":
-                worker.synthesizer.tts_model = worker.synthesizer.tts_model.half()
-                for _m in worker.synthesizer.tts_model.modules():
-                    if isinstance(_m, torch.nn.LayerNorm):
-                        _m.float()
-            elif COQUI_PRECISION == "bf16":
-                worker.synthesizer.tts_model = worker.synthesizer.tts_model.to(dtype=torch.bfloat16)
-                # HiFiGAN vocoder uses cuFFT which does not support bf16
-                worker.synthesizer.tts_model.hifigan_decoder = worker.synthesizer.tts_model.hifigan_decoder.float()
-            print(f"HOT WORKER: {COQUI_PRECISION} applied.", flush=True)
-        tts_hot_worker = worker
+        backend = load_backend()
+        print(
+            f"HOT WORKER: loading backend '{backend.name}' (precision={COQUI_PRECISION})...",
+            flush=True,
+        )
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        backend.load(device=device, precision=COQUI_PRECISION)
+        _backend = backend
         print("HOT WORKER: Ready.", flush=True)
     except Exception as e:
         hot_worker_error = str(e)
         print(f"HOT WORKER: CRITICAL — failed to load: {e}", flush=True)
+
 
 _load_hot_model()
 
@@ -440,6 +447,10 @@ class _ColdTTSWorker:
     async def spawn(self) -> bool:
         """Spawn the subprocess and wait for {"ready": true}. Returns False on failure."""
         env = os.environ.copy()
+        # Forward backend selection to the cold worker subprocess so it
+        # instantiates the same plugin as the hot worker.
+        env["TTS_BACKEND"]              = (_backend.name if _backend is not None
+                                           else os.environ.get("TTS_BACKEND", "coqui"))
         env["TTS_MODEL"]                = MODEL_NAME
         env["TTS_HOME"]                 = MODEL_CACHE_DIR
         env["COQUI_PRECISION"]           = COQUI_PRECISION
@@ -572,24 +583,21 @@ def _run_tts_hot_locked(text: str, lang: str, speaker_wav: str,
 
 def _run_tts_hot_lane(text: str, lang: str, speaker_wav: str,
                        speed: float, output_path: str, params: dict):
-    # autocast ensures fp32 activations (e.g. speaker conditioning latents) are
-    # automatically cast to the target dtype, avoiding type mismatches inside
-    # tts_to_file without requiring manual tensor casting.
-    _autocast_on = COQUI_PRECISION != "fp32" and torch.cuda.is_available()
-    _autocast_dtype = torch.bfloat16 if COQUI_PRECISION == "bf16" else torch.float16
-    with torch.autocast("cuda", dtype=_autocast_dtype, enabled=_autocast_on):
-        tts_hot_worker.tts_to_file(
-            text=text,
-            speaker_wav=speaker_wav,
-            language=lang,
-            file_path=output_path,
-            speed=speed,
-            temperature=params.get("temperature", 0.75),
-            length_penalty=params.get("length_penalty", 1.0),
-            repetition_penalty=params.get("repetition_penalty", 5.0),
-            top_k=params.get("top_k", 50),
-            top_p=params.get("top_p", 0.85),
-        )
+    """Synthesize `text` through the hot backend and write the WAV to disk.
+
+    Backend-specific concerns (autocast, model internals) are encapsulated
+    inside `_backend.infer()`. This function just bridges the server's
+    file-based contract with the backend's bytes-returning API.
+    """
+    wav_bytes = _backend.infer(
+        text=text,
+        voice_wav_path=speaker_wav,
+        language=lang,
+        speed=speed,
+        params=params,
+    )
+    with open(output_path, "wb") as f:
+        f.write(wav_bytes)
 
 
 async def _hot_worker_loop() -> None:
@@ -731,7 +739,7 @@ async def _cold_pool_manager() -> None:
             load_score = round(min(drain / ROUTING_DRAIN_CAP_SECONDS, 1.0), 3)
         else:
             load_score = round(min(_work_queue_words / 500.0, 1.0), 3)
-        accepts = tts_hot_worker is not None and hot_worker_error is None and load_score < 1.0
+        accepts = _hot_worker_ready() and load_score < 1.0
         await _publish_to_redis(load_score, accepts)
 
 # -------------------------------
@@ -739,7 +747,7 @@ async def _cold_pool_manager() -> None:
 # -------------------------------
 async def _warmup_hot_ema() -> None:
     """Seed _hot_ema_spw via a real synthesis through the hot lane."""
-    if tts_hot_worker is None:
+    if not _hot_worker_ready():
         return
     warmup_text = "All systems nominal. Standing by for further orders."
     word_count = _count_words(warmup_text)
@@ -896,13 +904,14 @@ async def health_check():
     else:
         # Not yet calibrated — use word count as rough proxy (500 words ≈ saturated)
         load_score = round(min(_work_queue_words / 500.0, 1.0), 3)
-    accepts = tts_hot_worker is not None and hot_worker_error is None and load_score < 1.0
+    accepts = _hot_worker_ready() and load_score < 1.0
     return {
         "status": "ok",
         "version": SERVER_VERSION,
+        "backend": _backend.name if _backend is not None else None,
         "model": MODEL_NAME,
         "precision": COQUI_PRECISION,
-        "hot_worker_loaded": tts_hot_worker is not None,
+        "hot_worker_loaded": _hot_worker_ready(),
         "hot_worker_error": hot_worker_error,
         "routing": {
             "load_score": load_score,
@@ -1039,27 +1048,12 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
     return response
 
 # -------------------------------
-# 14. Endpoint: POST /v1/audio/speech/stream  (unchanged — hot lane only)
+# 14. Endpoint: POST /v1/audio/speech/stream  (hot lane only)
 # -------------------------------
-
-_STREAM_SAMPLE_RATE    = 24000
-_STREAM_NUM_CHANNELS   = 1
-_STREAM_BITS_PER_SAMPLE = 16
-
-
-def make_streaming_wav_header() -> bytes:
-    data_size  = 0xFFFFFFFF
-    riff_size  = data_size + 36
-    byte_rate  = _STREAM_SAMPLE_RATE * _STREAM_NUM_CHANNELS * _STREAM_BITS_PER_SAMPLE // 8
-    block_align = _STREAM_NUM_CHANNELS * _STREAM_BITS_PER_SAMPLE // 8
-    return struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF", riff_size, b"WAVE",
-        b"fmt ", 16,
-        1, _STREAM_NUM_CHANNELS, _STREAM_SAMPLE_RATE,
-        byte_rate, block_align, _STREAM_BITS_PER_SAMPLE,
-        b"data", data_size,
-    )
+# Streaming delegates to `_backend.infer_stream()` which yields the WAV
+# header as its first element, followed by raw PCM chunks. Backends that
+# do not support streaming raise NotImplementedError — the endpoint
+# wraps this into HTTP 501.
 
 
 async def stream_tts_hot_lane_async(text: str, lang: str, speaker_wav: str,
@@ -1069,29 +1063,19 @@ async def stream_tts_hot_lane_async(text: str, lang: str, speaker_wav: str,
 
     def sync_produce():
         try:
-            gpt_cond_latent, speaker_embedding = (
-                tts_hot_worker.synthesizer.tts_model.get_conditioning_latents(
-                    audio_path=[speaker_wav]
-                )
-            )
-            for chunk in tts_hot_worker.synthesizer.tts_model.inference_stream(
-                text, lang, gpt_cond_latent, speaker_embedding,
+            for chunk in _backend.infer_stream(
+                text=text,
+                voice_wav_path=speaker_wav,
+                language=lang,
                 speed=speed,
-                temperature=params.get("temperature", 0.75),
-                length_penalty=params.get("length_penalty", 1.0),
-                repetition_penalty=params.get("repetition_penalty", 5.0),
-                top_k=params.get("top_k", 50),
-                top_p=params.get("top_p", 0.85),
-                stream_chunk_size=20,
+                params=params,
             ):
-                pcm_bytes = (chunk.squeeze() * 32767).to(torch.int16).cpu().numpy().tobytes()
-                asyncio.run_coroutine_threadsafe(queue.put(pcm_bytes), loop).result()
+                asyncio.run_coroutine_threadsafe(queue.put(chunk), loop).result()
         except Exception as e:
             asyncio.run_coroutine_threadsafe(queue.put(e), loop).result()
         finally:
             asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
 
-    yield make_streaming_wav_header()
     producer_thread = threading.Thread(target=sync_produce, daemon=True)
     producer_thread.start()
     while True:
@@ -1128,7 +1112,7 @@ async def create_speech_stream(request: Request):
             top_p=float(form_data.get("top_p", os.environ.get("DEFAULT_TOP_P", 0.85))),
         )
 
-    if not tts_hot_worker:
+    if not _hot_worker_ready():
         raise HTTPException(status_code=503, detail="Hot worker not loaded. Streaming unavailable.")
     if not model_lock.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="Hot worker busy. Use /v1/audio/speech for queued synthesis.")
