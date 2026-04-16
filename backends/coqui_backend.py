@@ -48,10 +48,16 @@ _STREAM_BITS_PER_SAMPLE = 16
 
 
 def _make_streaming_wav_header() -> bytes:
-    """WAV header with the data-size field set to 0xFFFFFFFF (unknown length),
-    safe for streaming HTTP responses."""
+    """WAV header with size fields set to 0xFFFFFFFF (unknown length),
+    safe for streaming HTTP responses.
+
+    For a streaming WAV where the final length is not known, the RIFF
+    spec permits using 0xFFFFFFFF as a sentinel for both riff_size and
+    data_size. Naively writing `data_size + 36` overflows uint32 and
+    breaks struct.pack("<I", ...).
+    """
     data_size = 0xFFFFFFFF
-    riff_size = data_size + 36
+    riff_size = 0xFFFFFFFF
     byte_rate = (
         _STREAM_SAMPLE_RATE
         * _STREAM_NUM_CHANNELS
