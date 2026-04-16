@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Coqui TTS Server (Hybrid Model)
+# Uttera TTS Server (Multi-Backend Hybrid)
 #
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2025-2026 Hugo L. Espuny
@@ -10,14 +10,42 @@
 # Part of the Uttera voice stack (https://uttera.ai).
 # See LICENSE and NOTICE for full terms and attributions.
 #
-# main_tts.py - Coqui TTS Hybrid-Worker Server
+# main_tts.py - Uttera TTS Hybrid-Worker Server (plugin-based backends)
 #
-# Package: coqui-tts-server
-# Version: 1.7.0
+# Package: uttera-tts-hotcold
+# Version: 2.0.0
 # Maintainer: Uttera, Hugo L. Espuny
-# Description: High-performance TTS server with personality tuning and GIL-bypass concurrency.
+# Description: High-performance TTS server with pluggable engines (Coqui,
+#              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.0.0 (2026-04-16): First Uttera-branded release. BREAKING:
+#   * Plugin-based backend architecture. Inference now goes through
+#     backends.TTSBackend (ABC) + factory keyed on TTS_BACKEND env var.
+#     Default "coqui" — existing deployments unchanged. Coqui-specific code
+#     moved to backends/coqui_backend.py; cold_worker_tts.py also wired
+#     through the factory so VoxCPM cold pools work.
+#   * New VoxCPM2 backend (backends/voxcpm_backend.py) — select with
+#     TTS_BACKEND=voxcpm. Personality params (temperature, cfg_value,
+#     inference_timesteps) exposed in API schema.
+#   * Requirements split per backend: requirements-coqui.txt,
+#     requirements-voxcpm.txt. setup.sh accepts a backend arg; Docker
+#     builds accept --build-arg TTS_BACKEND.
+#   * Rebranded from "Uttera / Coqui TTS Server" to Uttera. Repo moved
+#     to github.com/uttera/uttera-tts-hotcold. License set to Apache-2.0.
+#   Added: CI workflow (lint + structure + optional GPU smoke),
+#     bench_160x40w.py + 40-word prompt corpus + 160 WAV references,
+#     docs/backends.md for plugin authors.
+#   Fixed: /v1/audio/speech/stream returned empty body — streaming WAV
+#     header overflowed uint32 (0xFFFFFFFF + 36) and aborted the generator
+#     before any bytes reached the client. Now uses 0xFFFFFFFF directly for
+#     both riff_size and data_size (RIFF "unknown length" sentinel).
+#   Fixed: Coqui cold worker prints now go to stderr so they don't corrupt
+#     the stdout JSON IPC protocol.
+#   Fixed: VoxCPM model class name (VoxCPMModel, not VoxCPM2Model).
+# - 1.7.1 (2026-04-11): DEFAULT_VOICE env var for configuring the default
+#   voice without editing voices.json. Falls back to "alloy" if unset or
+#   absent from the voice map.
 # - 1.7.0 (2026-04-10): External voice map + precision control + dependency pins.
 #   Voice mapping: VOICE_MAP is now loaded from voices.json at startup instead
 #   of being hardcoded. Format: {"name": "subdir/file.wav"}. Search order:
@@ -76,7 +104,15 @@
 # - 1.1.0 (2026-02-28): Hot/Cold concurrency and GIL bypass.
 # - 1.0.0 (2025-11-20): Initial production release.
 #
-# --- Architecture Summary (v1.6.0) ---
+# --- Architecture Summary (v2.0.0) ---
+#
+# * PLUGIN BACKENDS (v2.0.0)
+#   Inference is delegated to a backend implementing backends.TTSBackend.
+#   The backend is selected at startup via the TTS_BACKEND env var
+#   (default: "coqui"). Built-in options: "coqui" (XTTS-v2, streaming
+#   supported) and "voxcpm" (VoxCPM2). See backends/ and docs/backends.md
+#   to add a new engine. cold_worker_tts.py uses the same factory, so
+#   persistent cold pools work for any backend transparently.
 #
 # * SHARED WORK QUEUE
 #   All synthesis requests (speech endpoint) enqueue a _WorkItem into _work_queue.
@@ -100,8 +136,9 @@
 #   Computed every COLD_POOL_MANAGER_INTERVAL seconds by _cold_pool_manager.
 #   Capped by COLD_POOL_SIZE (safety) and VRAM availability.
 #
-# * STREAM LANE (unchanged)
-#   POST /v1/audio/speech/stream uses XTTS-v2 inference_stream on the hot worker.
+# * STREAM LANE
+#   POST /v1/audio/speech/stream uses the backend's infer_stream() on the
+#   hot worker (only backends with supports_streaming=True accept this).
 #   Acquires model_lock directly; returns HTTP 503 if busy.
 #
 
@@ -239,7 +276,7 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "1.7.0"
+SERVER_VERSION = "2.0.0"
 
 # -------------------------------
 # 2. Voice Mapping — loaded from VOICE_ASSET_DIR/voices.json
@@ -864,7 +901,7 @@ async def _lifespan(application: FastAPI):
         await _redis.aclose()
 
 
-app = FastAPI(title="Coqui TTS Server", version=SERVER_VERSION, lifespan=_lifespan)
+app = FastAPI(title="Uttera TTS Server", version=SERVER_VERSION, lifespan=_lifespan)
 
 # -------------------------------
 # 11. Audio Utilities

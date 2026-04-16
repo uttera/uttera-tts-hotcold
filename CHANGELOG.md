@@ -5,6 +5,103 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-04-16
+
+First Uttera-branded release. Plugin-based multi-backend architecture, full
+rebrand from "Uttera / Coqui TTS Server" to "Uttera TTS", relicensed to
+Apache-2.0, and a second built-in backend (VoxCPM2).
+
+### BREAKING
+- **Project rebranded to Uttera.** Repository moved to
+  `https://github.com/uttera/uttera-tts-hotcold`. Docker image, systemd unit,
+  and documentation renamed accordingly. Legacy clone URLs and Uttera
+  branding removed.
+- **License changed to Apache-2.0** (was unlicensed / proprietary in earlier
+  releases). See `LICENSE` and `NOTICE`. The Coqui XTTS-v2 model weights
+  remain under the Coqui Public Model License (CPML, non-commercial); see
+  `NOTICE` for the commercial licensing path via Coqui.
+- **Plugin backend architecture.** Coqui-specific code is no longer in
+  `main_tts.py`. Inference now goes through `backends.TTSBackend` (ABC) and
+  a factory loaded from the `TTS_BACKEND` env var. Default is `coqui` so
+  existing deployments continue to work unchanged, but the `main_tts.py`
+  API for internal callers changed. Third-party patches that imported Coqui
+  TTS symbols from `main_tts` must move to `backends.coqui_backend`.
+- **Requirements split per backend.** `requirements.txt` now installs only
+  the server/runtime dependencies. Backend-specific dependencies live in
+  `requirements-coqui.txt` and `requirements-voxcpm.txt`. `setup.sh` accepts
+  a backend argument (default `coqui`); Docker builds accept
+  `--build-arg TTS_BACKEND=coqui|voxcpm`.
+
+### Added
+- **VoxCPM2 backend** (`backends/voxcpm_backend.py`). Alternative TTS engine
+  selectable via `TTS_BACKEND=voxcpm`. 30 languages, 48 kHz output, and
+  personality parameters (`temperature`, `cfg_value`, `inference_timesteps`)
+  exposed through the same API schema used by Coqui.
+- **`backends/` package** with:
+  - `base.py` — `TTSBackend` abstract base class defining the contract
+    (`load`, `unload`, `infer`, `infer_stream`, `name`, `supports_streaming`).
+  - `coqui_backend.py` — Coqui XTTS-v2 adapter, reference implementation.
+  - `voxcpm_backend.py` — VoxCPM2 adapter.
+  - Factory in `__init__.py` (`load_backend`).
+- **CI workflow** (`.github/workflows/ci.yml`): lint, structural checks,
+  and an optional GPU smoke test gated on a runner label.
+- **Test corpus and benchmark harness** under `tests/`: 40-word Spanish
+  prompt set (`prompts_40w/`), 160 generated WAV references and transcripts
+  (`audio_160/`, `transcripts_160/`), and `bench_160x40w.py` — 4 rounds × 40
+  prompts × 40 words using 4 voices to guarantee zero cache hits.
+- **Plugin architecture documentation** (`docs/backends.md`), expanded
+  `README.md` / `CONTRIBUTING.md` sections for adding new backends,
+  `HISTORY.md`, `AUTHORS.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`,
+  `CODEOWNERS`.
+
+### Changed
+- **`SERVER_VERSION` bumped to `2.0.0`.** Reflected in `/health`, the
+  FastAPI `app` metadata, and `/v1/models`.
+- **README, API.md, banner, and docs** rebranded to Uttera — tagline
+  "The voice layer for your AI", removed personal donation addresses,
+  updated etymology/backronym, fixed stale license references.
+- **Cold worker script** (`cold_worker_tts.py`) now goes through the
+  backend factory, so spawning a VoxCPM cold pool works the same way the
+  Coqui one does.
+
+### Fixed
+- **`/v1/audio/speech/stream` returned empty body.** The streaming WAV
+  header computed `riff_size = data_size + 36` with `data_size = 0xFFFFFFFF`,
+  overflowing uint32 and aborting the generator inside `struct.pack("<I", …)`
+  before any bytes reached the client. The endpoint responded HTTP 200 with
+  chunked transfer and then immediately closed the connection with zero
+  audio bytes. Fixed by setting `riff_size = 0xFFFFFFFF` directly — the
+  RIFF spec permits `0xFFFFFFFF` as a "length unknown" sentinel for
+  streaming WAV. Verified: 40-word Spanish prompt now produces 8 chunks /
+  ~280 kB in ~1.82 s (vs. ~2.73 s for the non-streaming endpoint), with the
+  first 44-byte WAV header reaching the client at ~0.020 s.
+- **Coqui cold worker log corruption.** Cold workers now log to `stderr`
+  so diagnostic prints do not corrupt the stdout JSON protocol used by
+  the hot-lane → cold-lane IPC.
+- **VoxCPM model class name.** Corrected `VoxCPM2Model` → `VoxCPMModel`
+  (upstream class name); the wrong class import broke backend load.
+
+### Validated
+- Single-request HOT path, 40-word Spanish prompt (WAV, cache-busted):
+  **~0.078 s/word** against the current production server. Consistent
+  with the §13.1 baseline (0.133 s/word) and faster than recent EMA
+  readings, confirming no regression in the inference path.
+- Streaming endpoint: full round-trip verified against a fresh
+  `Backend.infer_stream()` call (8 chunks, 280 kB, 1.82 s end-to-end).
+
+## [1.7.1] - 2026-04-11
+
+### Added
+- **`DEFAULT_VOICE` env var** for configuring the default voice without
+  editing `voices.json`. Falls back to `"alloy"` if unset or the named
+  voice is absent from the voice map.
+
+### Changed
+- Setup scripts, `README.md`, `API.md`, and `docker-compose.yml` updated
+  to reflect the v1.7.0 precision/voice-map changes.
+- `.env.example` synchronized with the full v1.7.0 env var surface, stale
+  experimental-py311 references removed.
+
 ## [1.7.0] - 2026-04-10
 
 ### Changed
