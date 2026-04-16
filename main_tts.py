@@ -273,11 +273,17 @@ class SpeechRequest(BaseModel):
     response_format: str = "mp3"
     speed: float = 1.0
     language: str = os.environ.get("DEFAULT_LANGUAGE", "en")
+    # Coqui personality parameters (autoregressive token sampling)
     temperature: float = float(os.environ.get("DEFAULT_TEMPERATURE", 0.75))
     length_penalty: float = float(os.environ.get("DEFAULT_LENGTH_PENALTY", 1.0))
     repetition_penalty: float = float(os.environ.get("DEFAULT_REPETITION_PENALTY", 5.0))
     top_k: int = int(os.environ.get("DEFAULT_TOP_K", 50))
     top_p: float = float(os.environ.get("DEFAULT_TOP_P", 0.85))
+    # VoxCPM personality parameters (diffusion)
+    # When set, these take priority over Coqui equivalents in the VoxCPM backend.
+    # When omitted (None), VoxCPM maps temperature → cfg_value automatically.
+    cfg_value: Optional[float] = None
+    inference_timesteps: Optional[int] = None
 
 # -------------------------------
 # 4. Hot Model Loading (through backend plugin)
@@ -988,9 +994,15 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         "top_k":              req.top_k,
         "top_p":              req.top_p,
     }
+    # VoxCPM-specific params — only include when explicitly set by client
+    if req.cfg_value is not None:
+        params["cfg_value"] = req.cfg_value
+    if req.inference_timesteps is not None:
+        params["inference_timesteps"] = req.inference_timesteps
     cache_key = hashlib.md5(
         f"{req.input}{voice_id}{req.speed}{req.response_format}"
-        f"{req.temperature}{req.length_penalty}{req.repetition_penalty}{req.top_k}{req.top_p}".encode()
+        f"{req.temperature}{req.length_penalty}{req.repetition_penalty}{req.top_k}{req.top_p}"
+        f"{req.cfg_value}{req.inference_timesteps}".encode()
     ).hexdigest()
     final_output_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.{req.response_format}")
 
@@ -1126,6 +1138,10 @@ async def create_speech_stream(request: Request):
         "temperature": req.temperature, "length_penalty": req.length_penalty,
         "repetition_penalty": req.repetition_penalty, "top_k": req.top_k, "top_p": req.top_p,
     }
+    if req.cfg_value is not None:
+        params["cfg_value"] = req.cfg_value
+    if req.inference_timesteps is not None:
+        params["inference_timesteps"] = req.inference_timesteps
 
     async def generate_and_release():
         try:
