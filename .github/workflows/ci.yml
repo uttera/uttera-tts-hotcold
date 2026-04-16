@@ -42,7 +42,7 @@ jobs:
           print(f'TTSBackend contract OK: {sorted(actual)}')
 
           # Verify factory can import both backend modules (without heavy deps)
-          import importlib
+          import importlib.util
           for name in ['coqui', 'voxcpm']:
               spec = importlib.util.find_spec(f'backends.{name}_backend')
               assert spec is not None, f'Backend module backends.{name}_backend not found'

@@ -57,7 +57,8 @@ warnings.filterwarnings("ignore", message=".*_register_pytree_node.*")
 
 os.environ["COQUI_TOS_AGREED"] = "1"
 
-import torch
+# Imported after the env var and warning filters above — noqa: E402.
+import torch  # noqa: E402
 
 # Monkey-patch: numpy() does not support bf16; auto-convert to fp32.
 _orig_numpy = torch.Tensor.numpy

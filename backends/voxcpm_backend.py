@@ -137,7 +137,6 @@ class Backend(TTSBackend):
         params: dict | None = None,
     ) -> bytes:
         """Synthesize text to WAV bytes (48 kHz mono 16-bit PCM)."""
-        import torch
         import soundfile as sf
         import numpy as np
 

@@ -143,18 +143,15 @@
 #
 
 import os
-import io
 import time
 import uuid
 import shutil
-import struct
 import asyncio
 import hashlib
 import tempfile
 import threading
 import dataclasses
 import warnings
-import sys
 import json
 import base64
 import subprocess
@@ -183,14 +180,16 @@ except ImportError:
         return _torch.isin(elements, test_elements)
     _tpu.isin_mps_friendly = _isin_mps_friendly
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request, BackgroundTasks
-from pydantic import BaseModel
-from fastapi.responses import FileResponse, StreamingResponse
-import torch
+# The imports below sit intentionally after the transformers monkey-patch
+# above, so noqa: E402 is expected.
+from fastapi import FastAPI, UploadFile, HTTPException, Request, BackgroundTasks  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
+import torch  # noqa: E402
 
 # Plugin-based TTS backends — TTS_BACKEND env var selects the implementation
 # (default "coqui"). See backends/__init__.py and backends/base.py.
-from backends import load_backend, TTSBackend
+from backends import load_backend, TTSBackend  # noqa: E402
 
 # Monkey-patch: numpy() does not support bf16; auto-convert to fp32.
 _orig_numpy = torch.Tensor.numpy
@@ -210,8 +209,10 @@ os.makedirs(ASSETS_DIR, exist_ok=True)
 def find_venv_path(rel_path):
     local = os.path.join(BASE_DIR, rel_path)
     parent = os.path.join(PARENT_DIR, rel_path)
-    if os.path.exists(local): return local
-    if os.path.exists(parent): return parent
+    if os.path.exists(local):
+        return local
+    if os.path.exists(parent):
+        return parent
     return local
 
 VENV_PYTHON = os.environ.get("VENV_PYTHON", find_venv_path("venv/bin/python"))
@@ -537,7 +538,7 @@ class _ColdTTSWorker:
         try:
             response_line = await self._proc.stdout.readline()
             resp = json.loads(response_line.strip())
-        except Exception as e:
+        except Exception:
             stderr_out = await self._read_stderr()
             if stderr_out:
                 print(f"COLD WORKER: subprocess stderr:\n{stderr_out}", flush=True)
@@ -911,9 +912,12 @@ def convert_audio(input_path: str, output_path: str, fmt: str):
         shutil.copy(input_path, output_path)
         return
     cmd = ["ffmpeg", "-y", "-i", input_path]
-    if fmt == "mp3":   cmd.extend(["-codec:a", "libmp3lame", "-qscale:a", "2"])
-    elif fmt == "opus": cmd.extend(["-codec:a", "libopus", "-b:a", "64k"])
-    elif fmt == "flac": cmd.extend(["-codec:a", "flac"])
+    if fmt == "mp3":
+        cmd.extend(["-codec:a", "libmp3lame", "-qscale:a", "2"])
+    elif fmt == "opus":
+        cmd.extend(["-codec:a", "libopus", "-b:a", "64k"])
+    elif fmt == "flac":
+        cmd.extend(["-codec:a", "flac"])
     cmd.append(output_path)
     try:
         subprocess.run(cmd, capture_output=(not DEBUG), check=True)

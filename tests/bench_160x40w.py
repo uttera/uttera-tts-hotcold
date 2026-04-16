@@ -8,7 +8,11 @@ Usage:
     python bench_160x40w.py [URL]
     python bench_160x40w.py http://sphinx:5100/v1/audio/speech
 """
-import asyncio, glob, os, sys, time
+import asyncio
+import glob
+import os
+import sys
+import time
 import httpx
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:5100/v1/audio/speech"
