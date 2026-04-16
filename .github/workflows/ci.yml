@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main, "experimental/*"]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install linters
+        run: pip install ruff
+      - name: Lint Python
+        run: |
+          ruff check backends/ main_tts.py cold_worker_tts.py tests/ --select E,F,W --ignore E501
+
+  structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate backend plugin contract
+        run: |
+          pip install fastapi pydantic uvicorn python-dotenv python-multipart
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from backends.base import TTSBackend
+          from abc import ABC
+
+          # Verify ABC defines expected methods
+          expected = {'infer', 'load', 'supported_languages', 'unload'}
+          actual = TTSBackend.__abstractmethods__
+          assert actual == expected, f'Abstract methods mismatch: {actual} vs {expected}'
+          print(f'TTSBackend contract OK: {sorted(actual)}')
+
+          # Verify factory can import both backend modules (without heavy deps)
+          import importlib
+          for name in ['coqui', 'voxcpm']:
+              spec = importlib.util.find_spec(f'backends.{name}_backend')
+              assert spec is not None, f'Backend module backends.{name}_backend not found'
+              print(f'Backend module backends.{name}_backend: found')
+          print('All backend modules discoverable.')
+          "
+
+      - name: Validate requirements files
+        run: |
+          for f in requirements.txt requirements-coqui.txt requirements-voxcpm.txt; do
+            echo "Checking $f..."
+            test -f "$f" || { echo "MISSING: $f"; exit 1; }
+            python -c "
+          with open('$f') as fh:
+              for i, line in enumerate(fh, 1):
+                  line = line.strip()
+                  if line and not line.startswith('#') and not line.startswith('-r'):
+                      print(f'  {line}')
+          "
+          done
+          echo "All requirements files valid."
+
+      - name: Validate test corpus
+        run: |
+          PROMPTS=$(ls tests/prompts_40w/prompt_*.txt 2>/dev/null | wc -l)
+          echo "Prompt files: $PROMPTS"
+          test "$PROMPTS" -eq 40 || { echo "Expected 40 prompt files"; exit 1; }
+          echo "Test corpus OK."
+
+  # GPU smoke test — only runs on self-hosted runners with NVIDIA GPU.
+  # Skip on GitHub-hosted runners (no GPU available).
+  smoke-coqui:
+    runs-on: [self-hosted, gpu]
+    if: false  # Enable when self-hosted GPU runner is configured
+    needs: [lint, structure]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup venv + install Coqui backend
+        run: |
+          python3.12 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements-coqui.txt
+      - name: Start server
+        run: |
+          source venv/bin/activate
+          COQUI_TOS_AGREED=1 TTS_BACKEND=coqui \
+            uvicorn main_tts:app --host 127.0.0.1 --port 5100 &
+          for i in $(seq 1 60); do
+            sleep 2
+            curl -s http://127.0.0.1:5100/health && break
+          done
+      - name: Health check
+        run: |
+          HEALTH=$(curl -s http://127.0.0.1:5100/health)
+          echo "$HEALTH" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d['status'] == 'ok', f'Health not ok: {d}'
+          assert d.get('backend') == 'coqui', f'Wrong backend: {d}'
+          assert d['hot_worker_loaded'], 'Hot worker not loaded'
+          print('Health check passed.')
+          "
+      - name: Synthesis smoke test
+        run: |
+          curl -s -X POST http://127.0.0.1:5100/v1/audio/speech \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"tts-1","voice":"alloy","input":"Smoke test."}' \
+            -o /tmp/smoke.wav -w "HTTP=%{http_code}\n"
+          file /tmp/smoke.wav | grep -q "audio" || { echo "Not a valid audio file"; exit 1; }
+          echo "Synthesis smoke test passed."
