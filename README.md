@@ -4,9 +4,11 @@
   <img src="docs/img/banner.png" alt="uttera.ai — The voice layer for your AI" width="800">
 </p>
 
-High-performance Coqui TTS API server with a hybrid "Hot/Cold" worker architecture.
+High-performance TTS API server with a hybrid "Hot/Cold" worker architecture and **pluggable backends** (Coqui XTTS-v2, VoxCPM2, and more).
 
 **Ideal for locally running installations of agents like OpenClaw or Open-WebUI, where the media should not leave the private local domain.**
+
+**Backends:** switch TTS engine with a single env var — `TTS_BACKEND=coqui` or `TTS_BACKEND=voxcpm`. See [docs/backends.md](docs/backends.md) for the full plugin architecture documentation.
 
 > **Created and maintained by [Hugo L. Espuny](https://github.com/fakehec).**
 > Part of the [Uttera](https://uttera.ai) voice stack.

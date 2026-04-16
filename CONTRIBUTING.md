@@ -66,6 +66,17 @@ Example: `feat: add VoxCPM2 backend support (v2.0.0)`
 - No trailing whitespace, single final newline.
 - Type hints are appreciated but not required everywhere.
 
+## Adding a new TTS backend
+
+If you want to contribute a new TTS engine adapter:
+
+1. Read [docs/backends.md](docs/backends.md) for the full plugin contract.
+2. Create `backends/<name>_backend.py` inheriting from `TTSBackend`.
+3. Create `requirements-<name>.txt` with backend-specific dependencies.
+4. Add a smoke test for the new backend in `.github/workflows/ci.yml`.
+5. Open a PR with a description of the engine, its license, and a sample
+   synthesis output.
+
 ## Developer Certificate of Origin (DCO)
 
 By contributing to this project, you certify that you wrote the code or
