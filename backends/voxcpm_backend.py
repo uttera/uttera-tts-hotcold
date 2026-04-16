@@ -120,8 +120,8 @@ class Backend(TTSBackend):
 
         print_err(f"VOXCPM BACKEND: loading from {model_path} on {device}...")
 
-        from voxcpm.model.voxcpm import VoxCPM2Model
-        self._model = VoxCPM2Model.from_local(model_path, optimize=True)
+        from voxcpm.model.voxcpm import VoxCPMModel
+        self._model = VoxCPMModel.from_local(model_path, optimize=True)
         self._model = self._model.to(device)
 
         self._device = device
