@@ -7,3 +7,6 @@ venv/
 *.mp3
 *.opus
 *.flac
+
+# Test WAV files — regenerable with tests/bench_160x40w.py
+tests/audio_160/
