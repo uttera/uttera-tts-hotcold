@@ -1,7 +1,10 @@
 services:
-  coqui-tts:
-    build: .
-    container_name: coqui-tts-server
+  uttera-tts:
+    build:
+      context: .
+      args:
+        TTS_BACKEND: ${TTS_BACKEND:-coqui}
+    container_name: uttera-tts-hotcold
     restart: unless-stopped
     ports:
       - "5100:5100"
@@ -10,6 +13,7 @@ services:
       - ./assets/cache:/app/assets/cache
       - ./assets/voices:/app/assets/voices
     environment:
+      - TTS_BACKEND=${TTS_BACKEND:-coqui}
       - TTS_MODEL=tts_models/multilingual/multi-dataset/xtts_v2
       - TTS_HOME=/app/assets/models
       - VOICE_ASSET_DIR=/app/assets/voices
@@ -20,7 +24,7 @@ services:
       - DEBUG=false
       - COQUI_TOS_AGREED=1
       # - REDIS_URL=redis://redis:6379
-      # - NODE_HOST=coqui-tts-server
+      # - NODE_HOST=uttera-tts-hotcold
       # - NODE_PORT=5100
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

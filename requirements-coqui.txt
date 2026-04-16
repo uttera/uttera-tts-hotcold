@@ -1,0 +1,16 @@
+# uttera-tts-hotcold — Coqui XTTS-v2 backend dependencies
+#
+# Install with:  pip install -r requirements-coqui.txt
+#
+# IMPORTANT: XTTS-v2 model weights are under the Coqui Public Model
+# License (CPML) which restricts use to NON-COMMERCIAL purposes.
+# See NOTICE for details and commercial alternatives.
+
+-r requirements.txt
+
+coqui-tts[codec]>=0.27.5
+torch>=2.9.0,<2.10.0
+torchaudio>=2.9.0,<2.10.0
+torchcodec>=0.8.1,<0.9.0
+transformers>=4.35.2,<5.0.0
+sentencepiece

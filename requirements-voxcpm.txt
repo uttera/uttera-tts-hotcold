@@ -1,0 +1,17 @@
+# uttera-tts-hotcold — VoxCPM2 backend dependencies
+#
+# Install with:  pip install -r requirements-voxcpm.txt
+#
+# VoxCPM2 is Apache-2.0 licensed — commercial use permitted.
+#
+# NOTE: torch 2.11+cu128 is required for Blackwell (sm_120) GPUs.
+# On older GPUs (Ampere, Hopper) torch 2.6+ should work.
+# flash-attn must be compiled for your GPU arch — see docs/blackwell.md.
+
+-r requirements.txt
+
+voxcpm==2.0.2
+torch>=2.6.0
+soundfile>=0.13.0
+numpy>=2.0.0
+huggingface_hub>=1.7.0
