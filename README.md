@@ -1,7 +1,9 @@
 # uttera-tts-hotcold
 
 <p align="center">
-  <img src="docs/img/banner.png" alt="uttera.ai — The voice layer for your AI" width="800">
+  <a href="https://uttera.ai">
+    <img src="docs/img/banner.png" alt="uttera.ai — The voice layer for your AI" width="800">
+  </a>
 </p>
 
 High-performance TTS API server with a hybrid "Hot/Cold" worker architecture and **pluggable backends** (Coqui XTTS-v2, VoxCPM2, and more).
