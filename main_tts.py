@@ -19,6 +19,13 @@
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.1.0 (2026-04-17): Adhoc voice-cloning field additively renamed for
+#   symmetry with uttera-tts-vllm v1.1.0. The canonical name is now
+#   `custom_voice_file` (unchanged from this server's previous contract);
+#   the vllm-native `speaker_wav` is accepted as an alias so the same
+#   client code works against either backend. If both are sent on the
+#   same request, the canonical one wins. No behavioural change to any
+#   existing client — only an additional accepted field name.
 # - 2.0.3 (2026-04-17): JSON-body cache opt-out. Clients can now send
 #   {"cache": false} (JSON) or cache=0/false/no/off (form) to skip the
 #   audio cache for that single request. Symmetric with the existing
@@ -299,7 +306,7 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.0.3"
+SERVER_VERSION = "2.1.0"
 
 # -------------------------------
 # 2. Voice Mapping — loaded from VOICE_ASSET_DIR/voices.json
@@ -1048,7 +1055,10 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             top_p=float(form_data.get("top_p", os.environ.get("DEFAULT_TOP_P", 0.85))),
             cache=_cache_field,
         )
-        custom_file = form_data.get("custom_voice_file")
+        # Canonical field name is `custom_voice_file`. `speaker_wav` is
+        # accepted as an alias for uttera-tts-vllm parity. If both are
+        # sent, the canonical one wins.
+        custom_file = form_data.get("custom_voice_file") or form_data.get("speaker_wav")
         if custom_file and isinstance(custom_file, UploadFile):
             temp_custom = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
             temp_custom.write(await custom_file.read())

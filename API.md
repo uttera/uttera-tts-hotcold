@@ -74,14 +74,29 @@ curl -X POST "http://localhost:5100/v1/audio/speech" \
      --output speech.mp3
 ```
 
-### Custom Voice Upload (Multipart only)
-You can provide a local `.wav` file as a reference for one-shot cloning:
+### Custom Voice Upload (Multipart only) — stateless adhoc cloning
+
+You can provide a local reference audio file for **one-shot cloning**. The server does not persist the sample or any derived latents — the upload lives for the single request only. Any libsndfile-readable format works (wav, flac, mp3, ogg, m4a).
+
+Canonical field name: **`custom_voice_file`**.
+
 ```bash
 curl -X POST "http://localhost:5100/v1/audio/speech" \
      -F "input=Cloning this specific voice sample." \
      -F "custom_voice_file=@/path/to/reference.wav" \
      --output cloned_speech.mp3
 ```
+
+Since v2.1.0 the server also accepts `speaker_wav` as an alias for the same field, so client code written against `uttera-tts-vllm` works unchanged here:
+
+```bash
+curl -X POST "http://localhost:5100/v1/audio/speech" \
+     -F "input=Cloning this specific voice sample." \
+     -F "speaker_wav=@/path/to/reference.wav" \
+     --output cloned_speech.mp3
+```
+
+If both fields are present on the same request, `custom_voice_file` wins.
 
 ---
 
@@ -133,7 +148,7 @@ The response carries `X-Cache: BYPASS` in all three cases so the client can veri
 
 Notes:
 - The opt-out is per-request; the operator's `CACHE_TTL_MINUTES` default is unaffected.
-- Adhoc voice-cloning requests (`custom_voice_file` multipart upload) were already cache-ineligible before this feature — they behave identically with or without the `cache` field.
+- Adhoc voice-cloning requests (`custom_voice_file` or `speaker_wav` multipart upload) were already cache-ineligible before this feature — they behave identically with or without the `cache` field.
 - This server itself logs only the uvicorn access line (method, path, status, response time). The opt-out does not control logging done by reverse proxies or wrapping applications.
 
 ### Error (500 Internal Server Error)

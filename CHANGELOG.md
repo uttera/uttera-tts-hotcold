@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-04-17
+
+### Added
+- `/v1/audio/speech` multipart handler now accepts `speaker_wav` as an
+  alias for the canonical `custom_voice_file` field. Symmetric with
+  `uttera-tts-vllm` v1.1.0 — the same client-side adhoc voice-cloning
+  code (`curl -F custom_voice_file=@sample.wav` or the vllm-native
+  `-F speaker_wav=@sample.wav`) works against either backend. If both
+  are present on the same request, `custom_voice_file` wins.
+
+No behaviour change for existing clients — this is a purely additive
+extension. The canonical name remains `custom_voice_file` as it has
+been in every public release of this repo.
+
 ## [2.0.3] - 2026-04-17
 
 ### Added
