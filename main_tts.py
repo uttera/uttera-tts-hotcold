@@ -19,6 +19,20 @@
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.0.3 (2026-04-17): JSON-body cache opt-out. Clients can now send
+#   {"cache": false} (JSON) or cache=0/false/no/off (form) to skip the
+#   audio cache for that single request. Symmetric with the existing
+#   Cache-Control header support and with uttera-tts-vllm v0.1.4.
+# - 2.0.2 (2026-04-17): Per-request cache bypass via Cache-Control
+#   HTTP header + response header X-Cache: HIT/MISS/BYPASS/DISABLED.
+#   New COLD_VRAM_HEADROOM_GB (default 2.0) reserved on top of the
+#   projected cold-pool consumption in _has_vram_for_cold_lane to
+#   prevent cascading OOMs with big backends (VoxCPM2 at ~8 GB per
+#   cold worker on a 32 GB card).
+# - 2.0.1 (2026-04-17): CACHE_TTL_MINUTES=0 now truly disables the
+#   cache (previously served every hit regardless of age and kept
+#   populating on-disk entries — silent bug surfaced by benchmark
+#   runs against small fixed corpora).
 # - 2.0.0 (2026-04-16): First Uttera-branded release. BREAKING:
 #   * Plugin-based backend architecture. Inference now goes through
 #     backends.TTSBackend (ABC) + factory keyed on TTS_BACKEND env var.
@@ -285,7 +299,7 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.0.2"
+SERVER_VERSION = "2.0.3"
 
 # -------------------------------
 # 2. Voice Mapping — loaded from VOICE_ASSET_DIR/voices.json
@@ -330,6 +344,11 @@ class SpeechRequest(BaseModel):
     # When omitted (None), VoxCPM maps temperature → cfg_value automatically.
     cfg_value: Optional[float] = None
     inference_timesteps: Optional[int] = None
+    # Opt out of the server-side audio cache for this specific request. When
+    # False the server neither reads nor writes the MD5-keyed audio cache;
+    # the response carries `X-Cache: BYPASS`. Omit (None) to fall back to
+    # the server default (driven by `CACHE_TTL_MINUTES`).
+    cache: Optional[bool] = None
 
 # -------------------------------
 # 4. Hot Model Loading (through backend plugin)
@@ -992,7 +1011,7 @@ async def health_check():
 # -------------------------------
 # 13. Endpoint: POST /v1/audio/speech
 # -------------------------------
-def _cache_bypass_requested(request: Request) -> bool:
+def _cache_header_bypass(request: Request) -> bool:
     """Honour the standard HTTP `Cache-Control: no-cache` header as an opt-out
     for this specific request, without requiring the operator to set
     `CACHE_TTL_MINUTES=0` globally. Bench harnesses and clients that want
@@ -1005,13 +1024,17 @@ def _cache_bypass_requested(request: Request) -> bool:
 @app.post("/v1/audio/speech")
 async def create_speech(request: Request, background_tasks: BackgroundTasks):
     content_type = request.headers.get("Content-Type", "")
-    bypass_cache = _cache_bypass_requested(request)
+    header_bypass = _cache_header_bypass(request)
     if "application/json" in content_type:
         data = await request.json()
         req = SpeechRequest(**data)
         custom_wav_path = None
     else:
         form_data = await request.form()
+        _raw_cache = form_data.get("cache")
+        _cache_field: Optional[bool] = None
+        if _raw_cache is not None:
+            _cache_field = str(_raw_cache).strip().lower() not in ("0", "false", "no", "off")
         req = SpeechRequest(
             input=form_data.get("input"),
             voice=form_data.get("voice", DEFAULT_VOICE),
@@ -1023,6 +1046,7 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             repetition_penalty=float(form_data.get("repetition_penalty", os.environ.get("DEFAULT_REPETITION_PENALTY", 5.0))),
             top_k=int(form_data.get("top_k", os.environ.get("DEFAULT_TOP_K", 50))),
             top_p=float(form_data.get("top_p", os.environ.get("DEFAULT_TOP_P", 0.85))),
+            cache=_cache_field,
         )
         custom_file = form_data.get("custom_voice_file")
         if custom_file and isinstance(custom_file, UploadFile):
@@ -1066,6 +1090,7 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
     ).hexdigest()
     final_output_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.{req.response_format}")
 
+    bypass_cache = header_bypass or (req.cache is False)
     cache_effectively_on = CACHE_TTL_MINUTES > 0 and not bypass_cache
     cache_lock = _cache_locks.setdefault(cache_key, asyncio.Lock())
     async with cache_lock:

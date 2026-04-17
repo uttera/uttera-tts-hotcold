@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3] - 2026-04-17
+
+### Added
+- JSON-body cache opt-out alongside the HTTP-header one. Clients can
+  now send `{"cache": false}` in the request body (or the string
+  `"0"`, `"false"`, `"no"`, `"off"` in multipart/urlencoded form) and
+  the server skips the audio cache for that single request. Keeps
+  symmetry with `uttera-tts-vllm` v0.1.4 so the same client code works
+  against either backend.
+
 ## [2.0.2] - 2026-04-17
 
 ### Added
