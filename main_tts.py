@@ -277,7 +277,7 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.0.0"
+SERVER_VERSION = "2.0.1"
 
 # -------------------------------
 # 2. Voice Mapping — loaded from VOICE_ASSET_DIR/voices.json
@@ -1049,15 +1049,11 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
 
     cache_lock = _cache_locks.setdefault(cache_key, asyncio.Lock())
     async with cache_lock:
-        # Cache check — hits bypass the queue entirely
-        if os.path.exists(final_output_path):
-            if CACHE_TTL_MINUTES > 0:
-                age_min = (time.time() - os.path.getmtime(final_output_path)) / 60
-                if age_min < CACHE_TTL_MINUTES:
-                    return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
-                os.remove(final_output_path)
-            else:
+        if CACHE_TTL_MINUTES > 0 and os.path.exists(final_output_path):
+            age_min = (time.time() - os.path.getmtime(final_output_path)) / 60
+            if age_min < CACHE_TTL_MINUTES:
                 return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
+            os.remove(final_output_path)
 
         word_count = _count_words(req.input)
         loop = asyncio.get_running_loop()
@@ -1084,19 +1080,22 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             if custom_wav_path and os.path.exists(custom_wav_path):
                 os.unlink(custom_wav_path)
 
-        # Write WAV to temp, convert to target format, cache
         temp_wav = os.path.join(tempfile.gettempdir(), f"tts_{uuid.uuid4()}.wav")
+        output_path = final_output_path if CACHE_TTL_MINUTES > 0 else os.path.join(
+            tempfile.gettempdir(), f"tts_{uuid.uuid4()}.{req.response_format}")
         try:
             with open(temp_wav, "wb") as f:
                 f.write(audio_bytes)
-            convert_audio(temp_wav, final_output_path, req.response_format)
+            convert_audio(temp_wav, output_path, req.response_format)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
         finally:
             if os.path.exists(temp_wav):
                 os.unlink(temp_wav)
 
-    response = FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
+    if CACHE_TTL_MINUTES <= 0:
+        background_tasks.add_task(lambda p=output_path: os.path.exists(p) and os.unlink(p))
+    response = FileResponse(output_path, media_type=f"audio/{req.response_format}")
     response.headers["X-Route"] = route
     return response
 

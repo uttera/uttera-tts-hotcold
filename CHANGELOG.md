@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-04-17
+
+### Fixed
+- `CACHE_TTL_MINUTES=0` now actually disables the cache. Previously the
+  value `0` was treated as "infinite TTL" — the read path served every
+  hit regardless of age, and the write path kept populating on-disk
+  entries. This surfaced during benchmarking against a small
+  fixed-corpus (the 40-prompt `uttera-tts-40w`): the first pass
+  populated the cache, every burst after that measured disk-read
+  latency instead of real TTS throughput (observed: 122 rps @ N=8 with
+  p50=19 ms — clearly a cache hit, not inference). With the fix,
+  `CACHE_TTL_MINUTES=0` bypasses both the read and write paths and the
+  server writes straight to a temp file cleaned up via
+  `BackgroundTasks`.
+
 ## [2.0.0] - 2026-04-16
 
 First Uttera-branded release. Plugin-based multi-backend architecture, full
