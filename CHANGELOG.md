@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-04-17
+
+### Added
+- Per-request cache bypass via the standard `Cache-Control: no-cache`
+  (or `no-store`) request header. Clients can opt out of the audio
+  cache on a per-call basis without the operator having to set
+  `CACHE_TTL_MINUTES=0` globally. Bench harnesses use this to get
+  apples-to-apples throughput without polluting the cache first.
+- Response header `X-Cache: HIT | MISS | BYPASS | DISABLED` on every
+  `/v1/audio/speech` response. `HIT` = served from cache; `MISS` =
+  cache was enabled but the entry had to be synthesised; `BYPASS` =
+  client asked us to skip the cache; `DISABLED` = server-side
+  `CACHE_TTL_MINUTES<=0`. Makes cache behaviour observable from the
+  client side.
+
+### Fixed
+- `COLD_VRAM_HEADROOM_GB` env var (default 2.0) now reserved on top of
+  the projected cold-pool consumption by `_has_vram_for_cold_lane`.
+  Without it, the gate could greenlight a spawn that pushed free VRAM
+  to ~0 and crash the next inference inside an existing worker —
+  observed with VoxCPM2 (~8 GB per cold worker) on the 32 GB RTX 5090
+  during benchmark Run 7. For bigger backends override via env:
+  `COLD_VRAM_HEADROOM_GB=3` gave clean burst@256 with voxcpm.
+
 ## [2.0.1] - 2026-04-17
 
 ### Fixed

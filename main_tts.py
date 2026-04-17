@@ -261,6 +261,14 @@ HOT_QUEUE_SAFETY_FACTOR = float(os.environ.get("HOT_QUEUE_SAFETY_FACTOR", "0.8")
 
 # Minimum free VRAM (GB) to spawn a cold worker. 0 = disable check.
 MIN_COLD_VRAM_GB = float(os.environ.get("MIN_COLD_VRAM_GB", "2.5"))
+# Extra VRAM reserved on top of what the controller projects the cold pool to
+# consume. Leaves room for CUDA scratch / temporary activation tensors that the
+# workers allocate *during* inference (diffusion attention KV, vocoder, etc.).
+# Without this the gate can greenlight a spawn that puts free-VRAM at ~0 and
+# crash the next inference inside one of the existing workers. Bigger models
+# (VoxCPM2 at ~8 GB each) need more headroom than small ones (Coqui XTTS at
+# ~2.5 GB); scale via env if a backend ever needs to override.
+COLD_VRAM_HEADROOM_GB = float(os.environ.get("COLD_VRAM_HEADROOM_GB", "2.0"))
 
 # Drain time (seconds) considered 100% load for routing score. Requests with a
 # drain estimate at or above this cap receive load_score=1.0 and the node is
@@ -277,7 +285,7 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.0.1"
+SERVER_VERSION = "2.0.2"
 
 # -------------------------------
 # 2. Voice Mapping — loaded from VOICE_ASSET_DIR/voices.json
@@ -447,7 +455,7 @@ def _has_vram_for_cold_lane() -> bool:
     free = _free_vram_gb()
     if free is None:
         return True
-    effective = free - (_cold_workers_in_flight * threshold)
+    effective = free - (_cold_workers_in_flight * threshold) - COLD_VRAM_HEADROOM_GB
     return effective >= threshold
 
 
@@ -984,9 +992,20 @@ async def health_check():
 # -------------------------------
 # 13. Endpoint: POST /v1/audio/speech
 # -------------------------------
+def _cache_bypass_requested(request: Request) -> bool:
+    """Honour the standard HTTP `Cache-Control: no-cache` header as an opt-out
+    for this specific request, without requiring the operator to set
+    `CACHE_TTL_MINUTES=0` globally. Bench harnesses and clients that want
+    apples-to-apples throughput measurements use this instead of racing against
+    a warmed cache. `no-store` is treated as the same opt-out."""
+    cc = request.headers.get("Cache-Control", "").lower()
+    return any(tok in cc for tok in ("no-cache", "no-store"))
+
+
 @app.post("/v1/audio/speech")
 async def create_speech(request: Request, background_tasks: BackgroundTasks):
     content_type = request.headers.get("Content-Type", "")
+    bypass_cache = _cache_bypass_requested(request)
     if "application/json" in content_type:
         data = await request.json()
         req = SpeechRequest(**data)
@@ -1047,12 +1066,15 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
     ).hexdigest()
     final_output_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.{req.response_format}")
 
+    cache_effectively_on = CACHE_TTL_MINUTES > 0 and not bypass_cache
     cache_lock = _cache_locks.setdefault(cache_key, asyncio.Lock())
     async with cache_lock:
-        if CACHE_TTL_MINUTES > 0 and os.path.exists(final_output_path):
+        if cache_effectively_on and os.path.exists(final_output_path):
             age_min = (time.time() - os.path.getmtime(final_output_path)) / 60
             if age_min < CACHE_TTL_MINUTES:
-                return FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
+                resp = FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
+                resp.headers["X-Cache"] = "HIT"
+                return resp
             os.remove(final_output_path)
 
         word_count = _count_words(req.input)
@@ -1081,7 +1103,7 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
                 os.unlink(custom_wav_path)
 
         temp_wav = os.path.join(tempfile.gettempdir(), f"tts_{uuid.uuid4()}.wav")
-        output_path = final_output_path if CACHE_TTL_MINUTES > 0 else os.path.join(
+        output_path = final_output_path if cache_effectively_on else os.path.join(
             tempfile.gettempdir(), f"tts_{uuid.uuid4()}.{req.response_format}")
         try:
             with open(temp_wav, "wb") as f:
@@ -1093,10 +1115,11 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             if os.path.exists(temp_wav):
                 os.unlink(temp_wav)
 
-    if CACHE_TTL_MINUTES <= 0:
+    if not cache_effectively_on:
         background_tasks.add_task(lambda p=output_path: os.path.exists(p) and os.unlink(p))
     response = FileResponse(output_path, media_type=f"audio/{req.response_format}")
     response.headers["X-Route"] = route
+    response.headers["X-Cache"] = "BYPASS" if bypass_cache else ("MISS" if CACHE_TTL_MINUTES > 0 else "DISABLED")
     return response
 
 # -------------------------------
