@@ -31,6 +31,7 @@ Generates audio from input text using the specified voice and personality parame
 | `repetition_penalty`| Float | `5.0` | Prevents word/phrase repetition. |
 | `top_k` | Integer | `50` | Limits sampling to the top K tokens. |
 | `top_p` | Float | `0.85` | Nucleus sampling threshold. |
+| `cache` | Bool | `null` | Per-request cache opt-out. `false` (or `0`) tells the server neither to read from nor write to the audio cache for this request — privacy-sensitive workloads (medical/legal dictation, personal notes) can guarantee nothing is persisted on disk about this single call. `true` is the explicit opt-in; `null`/omitted follows the server default (cache on whenever `CACHE_TTL_MINUTES > 0`). See §3 for the equivalent HTTP-header mechanism and the `X-Cache` response header. |
 
 ### `POST /v1/audio/speech/stream`
 
@@ -90,6 +91,50 @@ curl -X POST "http://localhost:5100/v1/audio/speech" \
 Returns the binary audio file in the requested format.
 - `Content-Type: audio/mpeg` (for mp3)
 - `Content-Type: audio/wav` (for wav)
+
+### Response headers
+- `X-Route: HOT` — synthesised now by the persistent hot worker.
+- `X-Route: COLD-POOL` — synthesised now by a subprocess cold worker from the pool.
+- `X-Route: COLD-POOL>HOT` — cold worker failed mid-request and the item was re-queued and completed by the hot worker.
+- `X-Cache: HIT` — bytes came from the on-disk cache; no synthesis ran.
+- `X-Cache: MISS` — cache was enabled but this entry had to be synthesised.
+- `X-Cache: BYPASS` — the client asked us to skip the cache for this request.
+- `X-Cache: DISABLED` — the operator has disabled the cache globally (`CACHE_TTL_MINUTES <= 0`).
+
+### Cache opt-out — per-request privacy control
+
+By default the server caches synthesised audio on disk keyed by `MD5(model | voice | speed | format | params | text)` for the window configured by `CACHE_TTL_MINUTES`. For **privacy-sensitive workloads** (medical/legal dictation, personal notes, one-off text a user does not want persisted), a client can opt out of the cache on a per-request basis. When the opt-out is requested, the server neither reads from nor writes to the cache for that call; the audio is returned from a temp file that is unlinked as soon as the response is flushed.
+
+Three equivalent mechanisms:
+
+1. **JSON body field**:
+   ```bash
+   curl -X POST http://localhost:5100/v1/audio/speech \
+     -H 'Content-Type: application/json' \
+     -d '{"input":"Notas privadas","voice":"alloy","cache":false}' \
+     -o out.mp3
+   ```
+
+2. **Multipart form field** (accepts `0`, `false`, `no`, `off`):
+   ```bash
+   curl -X POST http://localhost:5100/v1/audio/speech \
+     -F input='Notas privadas' -F voice=alloy -F cache=false -o out.mp3
+   ```
+
+3. **HTTP header** (standard `Cache-Control`):
+   ```bash
+   curl -X POST http://localhost:5100/v1/audio/speech \
+     -H 'Cache-Control: no-cache' -H 'Content-Type: application/json' \
+     -d '{"input":"Notas privadas","voice":"alloy"}' \
+     -o out.mp3
+   ```
+
+The response carries `X-Cache: BYPASS` in all three cases so the client can verify. `Cache-Control: no-store` is accepted equivalently.
+
+Notes:
+- The opt-out is per-request; the operator's `CACHE_TTL_MINUTES` default is unaffected.
+- Adhoc voice-cloning requests (`custom_voice_file` multipart upload) were already cache-ineligible before this feature — they behave identically with or without the `cache` field.
+- This server itself logs only the uvicorn access line (method, path, status, response time). The opt-out does not control logging done by reverse proxies or wrapping applications.
 
 ### Error (500 Internal Server Error)
 Returns a JSON object with error details:

@@ -62,7 +62,7 @@ Model License (CPML).
 - **Streaming:** `POST /v1/audio/speech/stream` delivers chunked WAV audio in real time via XTTS-v2's `inference_stream()` (Hot Lane only).
 - **Personality Tuning:** Full control over synthesis expressiveness via parameters like `temperature`, `top_p/k`, and `penalties`.
 - **Multilingual Excellence:** Native support for 16 languages: `en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja` (English by default).
-- **Intelligent Caching:** MD5-based caching for zero-latency repeated requests. Configurable TTL via `CACHE_TTL_MINUTES`.
+- **Intelligent Caching:** MD5-based caching for zero-latency repeated requests. Configurable TTL via `CACHE_TTL_MINUTES`. **Per-request opt-out** for privacy-sensitive calls via `{"cache": false}` body field or `Cache-Control: no-cache` header — nothing is persisted on disk about that specific request. Every response carries an `X-Cache` header (`HIT`/`MISS`/`BYPASS`/`DISABLED`) so the client can verify the decision. See [API.md §3](API.md#cache-opt-out--per-request-privacy-control) for the full contract.
 - **Health Endpoint:** `GET /health` exposes server version, model name, and hot worker status for proxies and Docker healthchecks.
 
 ## 📦 Installation & Setup
