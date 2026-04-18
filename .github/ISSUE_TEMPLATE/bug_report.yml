@@ -13,7 +13,7 @@ body:
     id: version
     attributes:
       label: Server version
-      description: "Output of `curl http://localhost:5100/health | jq -r .server_version`"
+      description: "Output of `curl http://localhost:9004/health | jq -r .server_version`"
       placeholder: "1.7.1"
     validations:
       required: true

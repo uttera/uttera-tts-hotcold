@@ -7,7 +7,7 @@ services:
     container_name: uttera-tts-hotcold
     restart: unless-stopped
     ports:
-      - "5100:5100"
+      - "9004:9004"
     volumes:
       - ./assets/models:/app/assets/models
       - ./assets/cache:/app/assets/cache
@@ -25,7 +25,7 @@ services:
       - COQUI_TOS_AGREED=1
       # - REDIS_URL=redis://redis:6379
       # - NODE_HOST=uttera-tts-hotcold
-      # - NODE_PORT=5100
+      # - NODE_PORT=9004
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     devices:

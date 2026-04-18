@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-04-18
+
+### Changed
+
+- **Default port migrated from `5100` → `9004`.** Formalising the
+  canonical Uttera-stack port scheme: all Text-to-Speech backends
+  (both `uttera-tts-hotcold` and `uttera-tts-vllm`) default to port
+  `9004`, all Speech-to-Text backends default to `9005`. The
+  Gatekeeper and clients route by service family — swapping `hotcold`
+  ↔ `vllm` is a backend change, not a port change.
+
+  **Why not keep `5100`:** although `5100` itself had no mainstream
+  collisions, the asymmetric pairing (TTS=5100 + STT=9005, because
+  STT had to move off 5000 due to macOS AirPlay / Docker Registry v2
+  collisions) would be surprising. Moving both families to the
+  9000-9099 range keeps the pair adjacent and in an IANA "User
+  Ports" range with no canonical assignment.
+
+  **Artefacts updated:** `main_tts.py` runtime default,
+  `cold_worker_tts.py` (any port references), `README.md`, `API.md`,
+  `Dockerfile` `EXPOSE`, `docker-compose.yml` port mapping,
+  `.env.example` `PORT` and `NODE_PORT`, `docs/backends.md` examples,
+  `tests/bench_160x40w.py` default URL, `setup.sh` post-install
+  hint, `.github/workflows/ci.yml` health probes + speech test URLs,
+  issue template health curl.
+
+### Migration
+
+No code change is required for deployments that override `PORT` via
+env var. For deployments running on the old default:
+- **If the Gatekeeper was pointing at `:5100`:** repoint it at `:9004`.
+- **If you need to keep `:5100`:** set `PORT=5100` in the server's env.
+- **Docker users:** update your `-p` flag or `docker-compose.yml`.
+
+### Related
+
+- `uttera-tts-vllm` v1.3.0 adopts the same `9004` port.
+- `uttera-stt-hotcold` v2.3.0 and `uttera-stt-vllm` v1.3.0 adopt
+  `9005` on the STT side.
+
 ## [2.2.1] - 2026-04-18
 
 ### Fixed

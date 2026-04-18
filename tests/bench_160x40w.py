@@ -6,7 +6,7 @@ never repeats across the 160 requests.
 
 Usage:
     python bench_160x40w.py [URL]
-    python bench_160x40w.py http://sphinx:5100/v1/audio/speech
+    python bench_160x40w.py http://sphinx:9004/v1/audio/speech
 """
 import asyncio
 import glob
@@ -15,7 +15,7 @@ import sys
 import time
 import httpx
 
-URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:5100/v1/audio/speech"
+URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:9004/v1/audio/speech"
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts_40w")
 VOICES_PER_ROUND = ["alloy", "echo", "fable", "nova"]
 ROUNDS = len(VOICES_PER_ROUND)

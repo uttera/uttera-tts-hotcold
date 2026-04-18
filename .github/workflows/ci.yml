@@ -90,14 +90,14 @@ jobs:
         run: |
           source venv/bin/activate
           COQUI_TOS_AGREED=1 TTS_BACKEND=coqui \
-            uvicorn main_tts:app --host 127.0.0.1 --port 5100 &
+            uvicorn main_tts:app --host 127.0.0.1 --port 9004 &
           for i in $(seq 1 60); do
             sleep 2
-            curl -s http://127.0.0.1:5100/health && break
+            curl -s http://127.0.0.1:9004/health && break
           done
       - name: Health check
         run: |
-          HEALTH=$(curl -s http://127.0.0.1:5100/health)
+          HEALTH=$(curl -s http://127.0.0.1:9004/health)
           echo "$HEALTH" | python3 -c "
           import json, sys
           d = json.load(sys.stdin)
@@ -108,7 +108,7 @@ jobs:
           "
       - name: Synthesis smoke test
         run: |
-          curl -s -X POST http://127.0.0.1:5100/v1/audio/speech \
+          curl -s -X POST http://127.0.0.1:9004/v1/audio/speech \
             -H 'Content-Type: application/json' \
             -d '{"model":"tts-1","voice":"alloy","input":"Smoke test."}' \
             -o /tmp/smoke.wav -w "HTTP=%{http_code}\n"

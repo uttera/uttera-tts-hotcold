@@ -13,12 +13,29 @@
 # main_tts.py - Uttera TTS Hybrid-Worker Server (plugin-based backends)
 #
 # Package: uttera-tts-hotcold
-# Version: 2.2.1
+# Version: 2.3.0
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with pluggable engines (Coqui,
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.3.0 (2026-04-18): Default port migrated from 5100 → 9004.
+#   Formalising the canonical Uttera-stack port scheme: all
+#   Text-to-Speech backends (hotcold + vllm) default to port 9004,
+#   all Speech-to-Text backends default to 9005. The Gatekeeper and
+#   clients route by service family (TTS/STT) — swapping hotcold ↔
+#   vllm is a backend change, not a port change. Rationale for
+#   leaving 5100: while 5100 itself had no mainstream collisions,
+#   pairing TTS on 5100 with STT on 9005 was asymmetric. The
+#   9000-9099 range is IANA "User Ports" without canonical
+#   assignment. Updated artefacts: `main_tts.py` runtime default,
+#   `cold_worker_tts.py` (if port-aware), README + API.md URLs,
+#   Dockerfile EXPOSE, docker-compose port mapping, CI workflow
+#   health probes + speech sample test, .env.example `PORT` and
+#   `NODE_PORT`, docs/backends.md examples, `tests/bench_160x40w.py`
+#   default URL, `setup.sh` post-install hint. Migration for
+#   deployments on the old default: set `PORT=5100` in env to keep
+#   the legacy endpoint, or repoint the Gatekeeper at `:9004`.
 # - 2.2.1 (2026-04-18): /health `model` field now reports the actual
 #   model the active backend is running, not the stale `TTS_MODEL`
 #   env var. v2.2.0 showed `tts_models/multilingual/multi-dataset/xtts_v2`
@@ -362,13 +379,13 @@ ROUTING_DRAIN_CAP_SECONDS = float(os.environ.get("ROUTING_DRAIN_CAP_SECONDS", "1
 # NODE_ID defaults to HOST:PORT. TTL is set to 3× the pool manager interval so
 # the key expires automatically if the node dies or Redis becomes unreachable.
 REDIS_URL     = os.environ.get("REDIS_URL", "")
-REDIS_NODE_ID = os.environ.get("NODE_ID", "") or f"{os.environ.get('NODE_HOST', 'localhost')}:{os.environ.get('NODE_PORT', '5100')}"
+REDIS_NODE_ID = os.environ.get("NODE_ID", "") or f"{os.environ.get('NODE_HOST', 'localhost')}:{os.environ.get('NODE_PORT', '9004')}"
 REDIS_NODE_HOST = os.environ.get("NODE_HOST", "localhost")
-REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
+REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "9004"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.2.1"
+SERVER_VERSION = "2.3.0"
 
 # Response-format whitelist. Anything outside this set is rejected up-front
 # at the wrapper instead of blowing up inside ffmpeg with a 500.
@@ -1507,4 +1524,4 @@ async def create_speech_stream(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main_tts:app", host="0.0.0.0", port=5100)
+    uvicorn.run("main_tts:app", host="0.0.0.0", port=9004)

@@ -50,4 +50,4 @@ for voice in "${voices[@]}"; do
 done
 
 echo "[entrypoint] Assets ready. Starting server..."
-exec /app/venv/bin/uvicorn main_tts:app --host 0.0.0.0 --port 5100
+exec /app/venv/bin/uvicorn main_tts:app --host 0.0.0.0 --port 9004

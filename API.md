@@ -2,7 +2,7 @@
 
 The server provides an OpenAI-compatible API for high-performance text-to-speech synthesis.
 
-**Base URL:** `http://localhost:5100`
+**Base URL:** `http://localhost:9004`
 
 ---
 
@@ -40,7 +40,7 @@ Real-time streaming TTS endpoint. Returns chunked audio as it is generated.
 
 **Example Request:**
 ```bash
-curl -X POST "http://localhost:5100/v1/audio/speech/stream" \
+curl -X POST "http://localhost:9004/v1/audio/speech/stream" \
      -H "Content-Type: application/json" \
      -d '{
        "input": "I am generating this audio in real time.",
@@ -54,7 +54,7 @@ curl -X POST "http://localhost:5100/v1/audio/speech/stream" \
 
 ### Using JSON (Standard)
 ```bash
-curl -X POST "http://localhost:5100/v1/audio/speech" \
+curl -X POST "http://localhost:9004/v1/audio/speech" \
      -H "Content-Type: application/json" \
      -d '{
        "input": "Hello sir, the system is operational.",
@@ -66,7 +66,7 @@ curl -X POST "http://localhost:5100/v1/audio/speech" \
 
 ### Using Form-data (with Personality Tuning)
 ```bash
-curl -X POST "http://localhost:5100/v1/audio/speech" \
+curl -X POST "http://localhost:9004/v1/audio/speech" \
      -F "input=Señor, el análisis ha terminado." \
      -F "voice=alloy" \
      -F "language=es" \
@@ -81,7 +81,7 @@ You can provide a local reference audio file for **one-shot cloning**. The serve
 Canonical field name: **`custom_voice_file`**.
 
 ```bash
-curl -X POST "http://localhost:5100/v1/audio/speech" \
+curl -X POST "http://localhost:9004/v1/audio/speech" \
      -F "input=Cloning this specific voice sample." \
      -F "custom_voice_file=@/path/to/reference.wav" \
      --output cloned_speech.mp3
@@ -90,7 +90,7 @@ curl -X POST "http://localhost:5100/v1/audio/speech" \
 Since v2.1.0 the server also accepts `speaker_wav` as an alias for the same field, so client code written against `uttera-tts-vllm` works unchanged here:
 
 ```bash
-curl -X POST "http://localhost:5100/v1/audio/speech" \
+curl -X POST "http://localhost:9004/v1/audio/speech" \
      -F "input=Cloning this specific voice sample." \
      -F "speaker_wav=@/path/to/reference.wav" \
      --output cloned_speech.mp3
@@ -124,7 +124,7 @@ Three equivalent mechanisms:
 
 1. **JSON body field**:
    ```bash
-   curl -X POST http://localhost:5100/v1/audio/speech \
+   curl -X POST http://localhost:9004/v1/audio/speech \
      -H 'Content-Type: application/json' \
      -d '{"input":"Notas privadas","voice":"alloy","cache":false}' \
      -o out.mp3
@@ -132,13 +132,13 @@ Three equivalent mechanisms:
 
 2. **Multipart form field** (accepts `0`, `false`, `no`, `off`):
    ```bash
-   curl -X POST http://localhost:5100/v1/audio/speech \
+   curl -X POST http://localhost:9004/v1/audio/speech \
      -F input='Notas privadas' -F voice=alloy -F cache=false -o out.mp3
    ```
 
 3. **HTTP header** (standard `Cache-Control`):
    ```bash
-   curl -X POST http://localhost:5100/v1/audio/speech \
+   curl -X POST http://localhost:9004/v1/audio/speech \
      -H 'Cache-Control: no-cache' -H 'Content-Type: application/json' \
      -d '{"input":"Notas privadas","voice":"alloy"}' \
      -o out.mp3
@@ -181,7 +181,7 @@ Returns server liveness and hot worker status. Suitable for proxies and Docker h
 
 **Example Request:**
 ```bash
-curl -X GET "http://localhost:5100/health"
+curl -X GET "http://localhost:9004/health"
 ```
 
 **Example Response:**
@@ -221,7 +221,7 @@ OpenAI-compatible model listing. Returns the supported TTS model IDs.
 
 **Example Request:**
 ```bash
-curl -X GET "http://localhost:5100/v1/models"
+curl -X GET "http://localhost:9004/v1/models"
 ```
 
 **Example Response:**
@@ -241,7 +241,7 @@ Returns a list of all available voice identifiers configured on the server.
 
 **Example Request:**
 ```bash
-curl -X GET "http://localhost:5100/v1/voices"
+curl -X GET "http://localhost:9004/v1/voices"
 ```
 
 **Example Response:**

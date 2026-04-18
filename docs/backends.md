@@ -19,10 +19,10 @@ Set the `TTS_BACKEND` environment variable before starting the server:
 
 ```bash
 # Coqui (default if TTS_BACKEND is unset)
-TTS_BACKEND=coqui uvicorn main_tts:app --port 5100
+TTS_BACKEND=coqui uvicorn main_tts:app --port 9004
 
 # VoxCPM2
-TTS_BACKEND=voxcpm uvicorn main_tts:app --port 5100
+TTS_BACKEND=voxcpm uvicorn main_tts:app --port 9004
 ```
 
 The same variable is forwarded to cold worker subprocesses automatically.

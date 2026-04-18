@@ -41,6 +41,6 @@ RUN mkdir -p assets/models assets/cache assets/voices/standard assets/voices/eli
 # Entrypoint
 RUN chmod +x entrypoint.sh
 
-EXPOSE 5100
+EXPOSE 9004
 
 ENTRYPOINT ["./entrypoint.sh"]

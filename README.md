@@ -94,7 +94,7 @@ sudo usermod -aG render $USER
 *Note: Restart your session for changes to take effect.*
 
 ### 3. Network Permissions
-The server listens on port `5100` by default. Ensure the user has permissions to open sockets on this port (standard for ports >1024).
+The server listens on port `9004` by default. Ensure the user has permissions to open sockets on this port (standard for ports >1024).
 
 ### 4. Vocal Provisioning
 - **Standard Voices**: `setup_assets.sh` provisions the 6 standard OpenAI identities (Alloy, Echo, Fable, Onyx, Nova, Shimmer) into `assets/voices/standard/`.
@@ -140,11 +140,11 @@ The server uses direct **Uvicorn** execution for maximum ASGI performance.
 ```bash
 source venv/bin/activate
 
-# Localhost only (Default: 127.0.0.1:5100)
-uvicorn main_tts:app --host 127.0.0.1 --port 5100
+# Localhost only (Default: 127.0.0.1:9004)
+uvicorn main_tts:app --host 127.0.0.1 --port 9004
 
 # Expose to Local Network (0.0.0.0)
-uvicorn main_tts:app --host 0.0.0.0 --port 5100
+uvicorn main_tts:app --host 0.0.0.0 --port 9004
 ```
 
 ### ⚙️ Environment Variables & .env
@@ -164,7 +164,7 @@ The server includes a `.env.example` file. You can create a **`.env`** file in t
 | `ROUTING_DRAIN_CAP_SECONDS` | `120` | Queue drain time considered 100% load. |
 | `REDIS_URL` | *(empty)* | Redis URL for node self-registration (opt-in). |
 | `NODE_HOST` | `localhost` | Host advertised to Redis for Gatekeeper routing. |
-| `NODE_PORT` | `5100` | Port advertised to Redis for Gatekeeper routing. |
+| `NODE_PORT` | `9004` | Port advertised to Redis for Gatekeeper routing. |
 | `DEBUG` | `false` | Set to `true` to enable worker routing traces. |
 | `VENV_PYTHON` | *(auto-detected)* | Absolute path to the venv Python executable. |
 
@@ -183,7 +183,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/uttera-tts-hotcold
-ExecStart=%h/uttera-tts-hotcold/venv/bin/uvicorn main_tts:app --host 127.0.0.1 --port 5100
+ExecStart=%h/uttera-tts-hotcold/venv/bin/uvicorn main_tts:app --host 127.0.0.1 --port 9004
 Restart=always
 RestartSec=5
 
@@ -251,7 +251,7 @@ docker run --rm --device nvidia.com/gpu=all nvidia/cuda:12.6.3-runtime-ubuntu24.
 docker compose up -d
 
 # Check server is ready
-curl http://localhost:5100/health
+curl http://localhost:9004/health
 
 # View logs (including first-run provisioning progress)
 docker compose logs -f
@@ -271,7 +271,7 @@ Both are persisted in host volumes and skipped on subsequent starts.
 Elite/custom voices are not provisioned automatically. Mount them into the container by placing your `.wav` files in `assets/voices/elite/` on the host — the volume mapping `./assets/voices:/app/assets/voices` picks them up automatically without rebuilding the image.
 
 ## 🔒 Security & Network Note
-By default, the server binds to **`127.0.0.1`** on port **`5100`**. 
+By default, the server binds to **`127.0.0.1`** on port **`9004`**. 
 - To allow external network access, modify the `--host` parameter to `0.0.0.0` in the execution command or systemd unit.
 - **WARNING**: This API **does not have authentication**. Exposing it to the network via `0.0.0.0` represents a security risk. Ensure the server is protected by a firewall or operating within a secure VPN/Local Network.
 
