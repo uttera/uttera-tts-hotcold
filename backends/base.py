@@ -169,3 +169,18 @@ class TTSBackend(ABC):
         from a config file), not probe the loaded model.
         """
         raise NotImplementedError
+
+    def model_id(self) -> str:
+        """Return the specific model identifier currently loaded.
+
+        Used by `/health` so the reported `model` field reflects what
+        the backend is actually running (e.g. "openbmb/VoxCPM2" or
+        "tts_models/multilingual/multi-dataset/xtts_v2") rather than
+        the global `TTS_MODEL` env var, which defaults to a Coqui path
+        and is misleading when another backend is active.
+
+        Default returns the backend `name` as a safe fallback. Backends
+        SHOULD override this to expose the concrete model path / HF
+        repo they load in `load()`.
+        """
+        return self.name

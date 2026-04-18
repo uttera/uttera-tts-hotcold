@@ -98,6 +98,11 @@ class Backend(TTSBackend):
         self._device: str = "cuda"
         self._loaded: bool = False
 
+    def model_id(self) -> str:
+        """Return the concrete VoxCPM2 model identifier (e.g.
+        `openbmb/VoxCPM2` or a local path)."""
+        return self._model_id
+
     # ------------------------------------------------------------------
     # TTSBackend contract
     # ------------------------------------------------------------------

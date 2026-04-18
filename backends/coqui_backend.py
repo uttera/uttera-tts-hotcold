@@ -91,6 +91,11 @@ class Backend(TTSBackend):
         self._device: str = "cuda"
         self._loaded: bool = False
 
+    def model_id(self) -> str:
+        """Return the concrete Coqui model path (e.g.
+        `tts_models/multilingual/multi-dataset/xtts_v2`)."""
+        return self._model_name
+
     # ------------------------------------------------------------------
     # TTSBackend contract
     # ------------------------------------------------------------------

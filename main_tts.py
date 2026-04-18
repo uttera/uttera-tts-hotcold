@@ -13,12 +13,21 @@
 # main_tts.py - Uttera TTS Hybrid-Worker Server (plugin-based backends)
 #
 # Package: uttera-tts-hotcold
-# Version: 2.2.0
+# Version: 2.2.1
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with pluggable engines (Coqui,
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.2.1 (2026-04-18): /health `model` field now reports the actual
+#   model the active backend is running, not the stale `TTS_MODEL`
+#   env var. v2.2.0 showed `tts_models/multilingual/multi-dataset/xtts_v2`
+#   (the Coqui default) even when `TTS_BACKEND=voxcpm` was active and
+#   the loaded model was `openbmb/VoxCPM2`. Added a `model_id()` method
+#   to the `TTSBackend` base with per-backend overrides (coqui returns
+#   its `_model_name`, voxcpm returns its `_model_id`). Cosmetic only
+#   — no behavioural change. Falls back to `TTS_MODEL` if the backend
+#   doesn't provide a concrete id.
 # - 2.2.0 (2026-04-18): OpenAI-compat polish sweep. One CRITICAL bug
 #   (adhoc voice cloning silently broken) plus a cluster of validation
 #   gaps surfaced by the full endpoint validation run.
@@ -359,7 +368,7 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.2.0"
+SERVER_VERSION = "2.2.1"
 
 # Response-format whitelist. Anything outside this set is rejected up-front
 # at the wrapper instead of blowing up inside ffmpeg with a 500.
@@ -1126,11 +1135,16 @@ async def health_check():
         # Not yet calibrated — use word count as rough proxy (500 words ≈ saturated)
         load_score = round(min(_work_queue_words / 500.0, 1.0), 3)
     accepts = _hot_worker_ready() and load_score < 1.0
+    # Prefer the backend's `model_id()` over the TTS_MODEL env var so
+    # /health reports the concrete model the active backend is running
+    # (e.g. openbmb/VoxCPM2 when TTS_BACKEND=voxcpm) rather than the
+    # Coqui-default env var.
+    backend_model_id = _backend.model_id() if _backend is not None else None
     return {
         "status": "ok",
         "version": SERVER_VERSION,
         "backend": _backend.name if _backend is not None else None,
-        "model": MODEL_NAME,
+        "model": backend_model_id or MODEL_NAME,
         "precision": COQUI_PRECISION,
         "hot_worker_loaded": _hot_worker_ready(),
         "hot_worker_error": hot_worker_error,
