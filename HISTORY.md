@@ -2,9 +2,7 @@
 
 ## Origins
 
-This software originated as a personal project by **Hugo L. Espuny**
-(hec@espuny.net)
-
+This software originated as a personal project by **Hugo L. Espuny**.
 The author was a Debian developer (`hec@debian.org`) until 2004. Among his
 contributions to the Debian project were the **first official Debian
 packages of PHP-Nuke and Drupal** — two content management systems that
@@ -108,6 +106,16 @@ Everything else is negotiable.
 - **Google Gemini** and **Anthropic Claude**, AI assistants that
   contributed substantively to the code, architecture, and documentation
   under the author's direction. See [AUTHORS.md](AUTHORS.md) for details.
+
+---
+
+## Contact
+
+For any question, bug, or conversation about the project, please open
+an Issue or Discussion in any of the
+[Uttera](https://github.com/uttera) repositories on GitHub. Personal
+email is intentionally omitted — GitHub is the canonical place where
+the work happens and where contributions are welcome.
 
 ---
 
