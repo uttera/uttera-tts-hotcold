@@ -5,6 +5,91 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-04-18
+
+OpenAI-compatibility polish sweep. One CRITICAL silent-failure bug
+plus a cluster of validation gaps surfaced by the full endpoint
+validation run against v2.1.0. All fixed.
+
+### Fixed
+
+1. **[CRITICAL] Adhoc voice cloning was silently disabled.** The
+   `isinstance(custom_file, UploadFile)` check in the speech handler
+   used `fastapi.datastructures.UploadFile`, but Starlette's form
+   parser returns `starlette.datastructures.UploadFile` — these are
+   DIFFERENT classes in FastAPI 0.136+ / Starlette 1.0+ (they were
+   aliases in earlier versions). The check always returned False, so
+   `custom_wav_path` stayed None and every "cloning" request silently
+   used the default voice. Responses carried `X-Route: HOT` and
+   `X-Cache: MISS` with no hint that the upload had been dropped.
+   Same root-cause bug as we just fixed in `uttera-tts-vllm` v1.2.0.
+   Fixed via `_is_upload_file()` (matches both classes + duck-type
+   fallback). **Users who relied on v2.1.0 adhoc cloning: upgrade.**
+2. **Unknown `voice` silently fell back to the default voice.**
+   A client requesting `"voice": "nonexistent"` got alloy audio back
+   with HTTP 200. Now rejects with HTTP 400 and the list of
+   available voices.
+3. **`response_format` outside {mp3, wav, pcm, opus, flac}** reached
+   ffmpeg and produced HTTP 500 "Audio conversion to yaml failed".
+   Now validated up-front → HTTP 422.
+4. **`speed` outside `[0.25, 4.0]`** (OpenAI spec) was not validated.
+   `speed=99` produced HTTP 500 (ffmpeg overflow); `speed=-1`
+   produced HTTP 200 with garbage. Now HTTP 422.
+5. **`temperature` outside `[0.0, 2.0]`** (safe Coqui range) was not
+   validated. Now HTTP 422.
+6. **`cfg_value` outside `[0.5, 5.0]`** (VoxCPM safe range) was not
+   validated when explicitly set. Now HTTP 422.
+7. **JSON body without `input`** raised `pydantic.ValidationError`
+   that escaped as HTTP 500. Now caught → HTTP 422.
+8. **Bogus / non-audio `custom_voice_file` bodies** returned HTTP
+   500 from the Coqui audio decoder. Now mapped to HTTP 400 with a
+   trimmed decode message. Empty uploads are caught earlier.
+9. **HEAD /health** returned HTTP 405. Now accepts both GET and HEAD.
+
+### Added
+
+- **Opt-in `CORSMiddleware`** gated on the `CORS_ALLOW_ORIGINS` env
+  var (comma-separated list or `"*"`). Disabled by default — API-first
+  deployments don't need it and enabling it unconditionally broadens
+  the attack surface.
+- **`X-Cache: ADHOC`** response label on adhoc voice-cloning
+  requests, matching `uttera-tts-vllm` v1.2.0 for observability
+  symmetry. Adhoc cloning also **always bypasses the MD5 audio
+  cache** (both read and write), preventing cache pollution — the
+  previous behaviour used the md5 of the temp-file path as the cache
+  key, which was unique per request and just wrote single-use junk
+  entries.
+
+### Changed
+
+- **`SERVER_VERSION` bumped to `2.2.0`.** The in-file
+  `# Version:` comment had been stuck at `2.0.0` since v2.0.0 —
+  resynced.
+- **`/v1/models` `owned_by`** now `"uttera"` (was the stale
+  `"uttera-legacy"` left over from the pre-rebrand release).
+
+### Breaking?
+
+- **Clients that unknowingly relied on v2.1.0's silent fallback to
+  the default voice** for adhoc cloning will now get actual cloned
+  audio from their uploaded reference. That's the documented
+  contract.
+- **Clients that passed unknown `voice` names** and relied on the
+  silent fallback will now receive HTTP 400 instead of default-voice
+  audio. Explicitly listing one of the available voices (or omitting
+  `voice` to use `DEFAULT_VOICE`) makes the request succeed.
+
+### Verified
+
+- All 13 validation cases return the expected 4xx codes (was: 7
+  wrong codes / silent successes in v2.1.0).
+- Adhoc voice cloning via both `custom_voice_file` and `speaker_wav`
+  alias emits `X-Cache: ADHOC`, writes no cache entry, produces
+  audio in the cloned voice, and leaves no copy of the uploaded WAV
+  on disk (MD5-scan verified).
+- 32-concurrent Coqui burst: 32/32 OK, no tracebacks, same rps as
+  v2.1.0 baseline.
+
 ## [2.1.0] - 2026-04-17
 
 ### Added

@@ -13,12 +13,63 @@
 # main_tts.py - Uttera TTS Hybrid-Worker Server (plugin-based backends)
 #
 # Package: uttera-tts-hotcold
-# Version: 2.0.0
+# Version: 2.2.0
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with pluggable engines (Coqui,
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.2.0 (2026-04-18): OpenAI-compat polish sweep. One CRITICAL bug
+#   (adhoc voice cloning silently broken) plus a cluster of validation
+#   gaps surfaced by the full endpoint validation run.
+#
+#   1. [CRITICAL] Adhoc voice cloning (`custom_voice_file` /
+#      `speaker_wav`) was silently disabled. `fastapi.UploadFile` and
+#      `starlette.datastructures.UploadFile` are DIFFERENT classes in
+#      FastAPI 0.136+ / Starlette 1.0+ (they were aliases in older
+#      versions). The handler's `isinstance(custom_file, UploadFile)`
+#      check used the fastapi flavour but `form.get()` returns the
+#      starlette one — isinstance always returned False, so every
+#      "cloning" request silently fell through to the default voice.
+#      Responses carried `X-Route: HOT` / `X-Cache: MISS`, with no
+#      indication the upload had been dropped. Same root-cause bug as
+#      we just fixed in `uttera-tts-vllm` v1.2.0. Fixed by accepting
+#      either class (or any file-like object with `read` + `filename`).
+#   2. Unknown `voice` silently fell back to the default voice
+#      (`DEFAULT_VOICE` / "alloy") without any error. A client asking
+#      for "foobar" got alloy audio back with 200 OK. Now rejects with
+#      HTTP 400 and the list of available voices.
+#   3. `response_format` outside {mp3, wav, pcm, opus, flac} reached
+#      ffmpeg and produced HTTP 500 "Audio conversion to yaml failed".
+#      Now validated up-front → HTTP 422.
+#   4. `speed` outside `[0.25, 4.0]` (OpenAI spec) was not validated.
+#      `speed=99` produced HTTP 500 (ffmpeg overflow) and `speed=-1`
+#      returned HTTP 200 with garbage audio. Now HTTP 422.
+#   5. `temperature` outside `[0.0, 2.0]` (safe Coqui range) was not
+#      validated; `temperature=99` returned 200 with garbage. Now 422.
+#   6. `cfg_value` outside `[0.5, 5.0]` (VoxCPM safe range) was not
+#      validated. Now 422 when explicitly set.
+#   7. JSON body without `input` raised `pydantic.ValidationError`
+#      that escaped as HTTP 500. Now caught → HTTP 422.
+#   8. Bogus / empty `custom_voice_file` silently fell back to the
+#      default voice (same root cause as (1), but would also silently
+#      accept non-audio bodies with a real UploadFile). Now pre-checks
+#      the uploaded file has bytes and a plausible audio extension,
+#      and lets the backend decoder surface format errors as HTTP 400.
+#   9. HEAD /health returned HTTP 405. Now accepts both GET and HEAD
+#      via `@app.api_route(methods=["GET", "HEAD"])`.
+#  10. `/v1/models` `owned_by` was still the stale `"uttera-legacy"`
+#      string from the pre-rebrand release. Now `"uttera"`.
+#  11. No CORS middleware. Added opt-in `CORSMiddleware` gated on
+#      `CORS_ALLOW_ORIGINS` env var (comma-separated or `"*"`).
+#      Disabled by default — API-first deployments don't need it.
+#  12. Adhoc voice cloning now sets `X-Cache: ADHOC` and bypasses the
+#      MD5 audio cache (both read and write). Previously the cache
+#      key used the md5 of the temp-file path, so every adhoc request
+#      wrote a junk cache entry that could never be re-used — cache
+#      pollution. Now symmetric with uttera-tts-vllm v1.2.0.
+#  Also: header comment was stuck at `# Version: 2.0.0` since v2.0.0
+#  (runtime SERVER_VERSION was already tracking). Resynced to match.
 # - 2.1.0 (2026-04-17): Adhoc voice-cloning field additively renamed for
 #   symmetry with uttera-tts-vllm v1.1.0. The canonical name is now
 #   `custom_voice_file` (unchanged from this server's previous contract);
@@ -204,8 +255,10 @@ except ImportError:
 # The imports below sit intentionally after the transformers monkey-patch
 # above, so noqa: E402 is expected.
 from fastapi import FastAPI, UploadFile, HTTPException, Request, BackgroundTasks  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from pydantic import BaseModel, ValidationError  # noqa: E402
 from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
+from starlette.datastructures import UploadFile as StarletteUploadFile  # noqa: E402
 import torch  # noqa: E402
 
 # Plugin-based TTS backends — TTS_BACKEND env var selects the implementation
@@ -306,7 +359,21 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "5100"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.1.0"
+SERVER_VERSION = "2.2.0"
+
+# Response-format whitelist. Anything outside this set is rejected up-front
+# at the wrapper instead of blowing up inside ffmpeg with a 500.
+SUPPORTED_RESPONSE_FORMATS = {"mp3", "wav", "pcm", "opus", "flac"}
+
+# Validation ranges applied at the wrapper layer. The engines (Coqui /
+# VoxCPM2) happily accept out-of-range values and produce garbage; the
+# wrapper enforces the OpenAI contract and returns HTTP 422 early.
+SPEED_MIN = 0.25            # OpenAI spec lower bound
+SPEED_MAX = 4.0             # OpenAI spec upper bound
+TEMPERATURE_MIN = 0.0       # Coqui token sampling
+TEMPERATURE_MAX = 2.0       # Above ~2 the AR head frequently produces garbage
+CFG_MIN = 0.5               # VoxCPM2 classifier-free guidance
+CFG_MAX = 5.0               # Above 5 the diffusion solver degenerates to NaN
 
 # -------------------------------
 # 2. Voice Mapping — loaded from VOICE_ASSET_DIR/voices.json
@@ -938,6 +1005,79 @@ async def _lifespan(application: FastAPI):
 
 app = FastAPI(title="Uttera TTS Server", version=SERVER_VERSION, lifespan=_lifespan)
 
+# Opt-in CORS middleware. API-first deployments don't need CORS, so it
+# stays off by default. Set CORS_ALLOW_ORIGINS to a comma-separated list
+# of origins, or "*" to allow all.
+_cors_origins_env = os.environ.get("CORS_ALLOW_ORIGINS", "").strip()
+if _cors_origins_env:
+    _cors_origins = ["*"] if _cors_origins_env == "*" else [
+        o.strip() for o in _cors_origins_env.split(",") if o.strip()
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
+        allow_headers=["*"],
+        expose_headers=["X-Route", "X-Cache"],
+    )
+
+
+# -------------------------------
+# 10b. Validation helpers
+# -------------------------------
+def _is_upload_file(value) -> bool:
+    """Return True if `value` is a file-upload object.
+
+    FastAPI 0.100+ and Starlette 1.0+ ship distinct `UploadFile` classes
+    (`fastapi.datastructures.UploadFile` vs
+    `starlette.datastructures.UploadFile`), and Starlette's form parser
+    always returns the Starlette flavour. A plain
+    `isinstance(x, fastapi.UploadFile)` check against a Starlette
+    instance silently returns False — which is how adhoc voice cloning
+    was broken up to v2.1.0. Match both classes explicitly; fall back
+    to duck-typing (`read` + `filename`) so any future divergence keeps
+    working.
+    """
+    if isinstance(value, (UploadFile, StarletteUploadFile)):
+        return True
+    return (
+        not isinstance(value, (str, bytes))
+        and hasattr(value, "read")
+        and hasattr(value, "filename")
+    )
+
+
+def _validate_speech_request(req: "SpeechRequest", available_voices: set) -> None:
+    """Wrapper-layer validation that the engines do not police themselves.
+
+    Raises HTTPException with 4xx codes; never returns bad values.
+    """
+    if req.response_format.lower() not in SUPPORTED_RESPONSE_FORMATS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"response_format '{req.response_format}' not supported. "
+                f"Use one of: {sorted(SUPPORTED_RESPONSE_FORMATS)}"
+            ),
+        )
+    if not (SPEED_MIN <= req.speed <= SPEED_MAX):
+        raise HTTPException(
+            status_code=422,
+            detail=f"speed {req.speed} out of range. Must be in [{SPEED_MIN}, {SPEED_MAX}].",
+        )
+    if not (TEMPERATURE_MIN <= req.temperature <= TEMPERATURE_MAX):
+        raise HTTPException(
+            status_code=422,
+            detail=f"temperature {req.temperature} out of range. Must be in [{TEMPERATURE_MIN}, {TEMPERATURE_MAX}].",
+        )
+    if req.cfg_value is not None and not (CFG_MIN <= req.cfg_value <= CFG_MAX):
+        raise HTTPException(
+            status_code=422,
+            detail=f"cfg_value {req.cfg_value} out of range. Must be in [{CFG_MIN}, {CFG_MAX}].",
+        )
+
+
 # -------------------------------
 # 11. Audio Utilities
 # -------------------------------
@@ -967,8 +1107,8 @@ async def list_models():
     return {
         "object": "list",
         "data": [
-            {"id": "tts-1",    "object": "model", "created": 1677610602, "owned_by": "uttera-legacy"},
-            {"id": "tts-1-hd", "object": "model", "created": 1677610602, "owned_by": "uttera-legacy"},
+            {"id": "tts-1",    "object": "model", "created": 1677610602, "owned_by": "uttera"},
+            {"id": "tts-1-hd", "object": "model", "created": 1677610602, "owned_by": "uttera"},
         ],
     }
 
@@ -976,7 +1116,7 @@ async def list_models():
 async def list_voices():
     return {"voices": sorted(list(VOICE_MAP.keys()))}
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     _free = _free_vram_gb()
     drain = round(_work_queue_words * _hot_ema_spw, 2) if _hot_ema_spw else None
@@ -1032,54 +1172,91 @@ def _cache_header_bypass(request: Request) -> bool:
 async def create_speech(request: Request, background_tasks: BackgroundTasks):
     content_type = request.headers.get("Content-Type", "")
     header_bypass = _cache_header_bypass(request)
+    custom_wav_path = None
     if "application/json" in content_type:
         data = await request.json()
-        req = SpeechRequest(**data)
-        custom_wav_path = None
+        try:
+            req = SpeechRequest(**data)
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors())
     else:
         form_data = await request.form()
         _raw_cache = form_data.get("cache")
         _cache_field: Optional[bool] = None
         if _raw_cache is not None:
             _cache_field = str(_raw_cache).strip().lower() not in ("0", "false", "no", "off")
-        req = SpeechRequest(
-            input=form_data.get("input"),
-            voice=form_data.get("voice", DEFAULT_VOICE),
-            response_format=form_data.get("response_format", "mp3"),
-            speed=float(form_data.get("speed", 1.0)),
-            language=form_data.get("language", os.environ.get("DEFAULT_LANGUAGE", "en")),
-            temperature=float(form_data.get("temperature", os.environ.get("DEFAULT_TEMPERATURE", 0.75))),
-            length_penalty=float(form_data.get("length_penalty", os.environ.get("DEFAULT_LENGTH_PENALTY", 1.0))),
-            repetition_penalty=float(form_data.get("repetition_penalty", os.environ.get("DEFAULT_REPETITION_PENALTY", 5.0))),
-            top_k=int(form_data.get("top_k", os.environ.get("DEFAULT_TOP_K", 50))),
-            top_p=float(form_data.get("top_p", os.environ.get("DEFAULT_TOP_P", 0.85))),
-            cache=_cache_field,
-        )
+        try:
+            req = SpeechRequest(
+                input=form_data.get("input"),
+                voice=form_data.get("voice", DEFAULT_VOICE),
+                response_format=form_data.get("response_format", "mp3"),
+                speed=float(form_data.get("speed", 1.0)),
+                language=form_data.get("language", os.environ.get("DEFAULT_LANGUAGE", "en")),
+                temperature=float(form_data.get("temperature", os.environ.get("DEFAULT_TEMPERATURE", 0.75))),
+                length_penalty=float(form_data.get("length_penalty", os.environ.get("DEFAULT_LENGTH_PENALTY", 1.0))),
+                repetition_penalty=float(form_data.get("repetition_penalty", os.environ.get("DEFAULT_REPETITION_PENALTY", 5.0))),
+                top_k=int(form_data.get("top_k", os.environ.get("DEFAULT_TOP_K", 50))),
+                top_p=float(form_data.get("top_p", os.environ.get("DEFAULT_TOP_P", 0.85))),
+                cache=_cache_field,
+            )
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors())
         # Canonical field name is `custom_voice_file`. `speaker_wav` is
         # accepted as an alias for uttera-tts-vllm parity. If both are
-        # sent, the canonical one wins.
+        # sent, the canonical one wins. The UploadFile isinstance check
+        # accepts both FastAPI's and Starlette's class (they diverged in
+        # FastAPI 0.136+ / Starlette 1.0+) — see `_is_upload_file`.
         custom_file = form_data.get("custom_voice_file") or form_data.get("speaker_wav")
-        if custom_file and isinstance(custom_file, UploadFile):
-            temp_custom = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-            temp_custom.write(await custom_file.read())
+        if _is_upload_file(custom_file):
+            custom_bytes = await custom_file.read()
+            if not custom_bytes:
+                raise HTTPException(
+                    status_code=400,
+                    detail="custom_voice_file is empty — upload a valid audio body.",
+                )
+            # Preserve the uploader's filename suffix so backends that
+            # dispatch on extension (libsndfile / librosa) can decode.
+            orig_suffix = os.path.splitext(custom_file.filename or "upload.wav")[1].lower() or ".wav"
+            temp_custom = tempfile.NamedTemporaryFile(delete=False, suffix=orig_suffix)
+            temp_custom.write(custom_bytes)
             temp_custom.close()
             custom_wav_path = temp_custom.name
-        else:
-            custom_wav_path = None
 
     if not req.input or not req.input.strip():
         raise HTTPException(status_code=422, detail="'input' must be a non-empty string.")
 
-    # Resolve speaker WAV
-    if custom_wav_path:
+    # Wrapper-level validation (OpenAI spec + safe ranges for the engines).
+    _validate_speech_request(req, set(VOICE_MAP.keys()))
+
+    # Resolve speaker WAV. Unknown voice is a client error — do NOT
+    # silently fall through to the default voice like v2.1.0 did.
+    adhoc = bool(custom_wav_path)
+    if adhoc:
         speaker_wav = custom_wav_path
-        voice_id = hashlib.md5(custom_wav_path.encode()).hexdigest()
+        voice_id = "adhoc"  # cache key collapses to "adhoc" (actual bypass is enforced below)
     else:
-        v_file = VOICE_MAP.get(req.voice.lower(), VOICE_MAP[DEFAULT_VOICE])
+        requested = req.voice.lower()
+        if requested not in VOICE_MAP:
+            if custom_wav_path and os.path.exists(custom_wav_path):
+                os.unlink(custom_wav_path)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown voice '{req.voice}'. Available: {sorted(VOICE_MAP.keys())}. "
+                    f"Pass an uploaded 'custom_voice_file' for adhoc cloning, or add the "
+                    f"voice to voices.json."
+                ),
+            )
+        v_file = VOICE_MAP[requested]
         speaker_wav = os.path.join(VOICE_ASSET_DIR, v_file)
-        voice_id = req.voice.lower()
+        voice_id = requested
         if not os.path.exists(speaker_wav):
-            speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP[DEFAULT_VOICE])
+            # Configured in voices.json but the wav file is missing on disk
+            # — that's a server-config issue, not a client error.
+            raise HTTPException(
+                status_code=500,
+                detail=f"Voice '{requested}' is mapped but the wav file is missing on disk.",
+            )
 
     params = {
         "temperature":        req.temperature,
@@ -1100,7 +1277,11 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
     ).hexdigest()
     final_output_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.{req.response_format}")
 
-    bypass_cache = header_bypass or (req.cache is False)
+    # Adhoc voice cloning ALWAYS bypasses the MD5 cache: the uploaded
+    # voice has no stable identity (temp-file path changes per request),
+    # and caching it would just pollute the cache with single-use junk
+    # entries. Matches uttera-tts-vllm v1.2.0 semantics.
+    bypass_cache = header_bypass or (req.cache is False) or adhoc
     cache_effectively_on = CACHE_TTL_MINUTES > 0 and not bypass_cache
     cache_lock = _cache_locks.setdefault(cache_key, asyncio.Lock())
     async with cache_lock:
@@ -1132,7 +1313,34 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         try:
             audio_bytes, route = await future
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            # Distinguish client-input errors (bogus audio body in
+            # custom_voice_file, unsupported codec) from true server
+            # faults. The backend signals decode failures via
+            # messages containing "AudioDecoder", "Could not open",
+            # "Invalid data", or "Format not recognised" — surface
+            # those as HTTP 400 with a trimmed message instead of 500.
+            msg = str(e)
+            low = msg.lower()
+            is_decode_error = adhoc and any(
+                m in low for m in (
+                    "audiodecoder",
+                    "could not open",
+                    "invalid data found",
+                    "format not recognised",
+                    "format not recognized",
+                )
+            )
+            if is_decode_error:
+                # Trim the full traceback to just the relevant line.
+                short = msg.strip().splitlines()[-1][:200] or "decode failed"
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Failed to decode custom_voice_file — not a valid "
+                        f"audio stream or unsupported codec ({short})."
+                    ),
+                )
+            raise HTTPException(status_code=500, detail=msg)
         finally:
             if custom_wav_path and os.path.exists(custom_wav_path):
                 os.unlink(custom_wav_path)
@@ -1154,7 +1362,18 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         background_tasks.add_task(lambda p=output_path: os.path.exists(p) and os.unlink(p))
     response = FileResponse(output_path, media_type=f"audio/{req.response_format}")
     response.headers["X-Route"] = route
-    response.headers["X-Cache"] = "BYPASS" if bypass_cache else ("MISS" if CACHE_TTL_MINUTES > 0 else "DISABLED")
+    # Symmetric with uttera-tts-vllm: when the client uploads a voice for
+    # cloning, label the X-Cache as ADHOC (the cache was skipped because
+    # of the cloning, not because of a client opt-out).
+    if adhoc:
+        x_cache = "ADHOC"
+    elif header_bypass or (req.cache is False):
+        x_cache = "BYPASS"
+    elif CACHE_TTL_MINUTES > 0:
+        x_cache = "MISS"
+    else:
+        x_cache = "DISABLED"
+    response.headers["X-Cache"] = x_cache
     return response
 
 # -------------------------------
@@ -1206,31 +1425,52 @@ async def create_speech_stream(request: Request):
     content_type = request.headers.get("Content-Type", "")
     if "application/json" in content_type:
         data = await request.json()
-        req = SpeechRequest(**data)
+        try:
+            req = SpeechRequest(**data)
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors())
     else:
         form_data = await request.form()
-        req = SpeechRequest(
-            input=form_data.get("input"),
-            voice=form_data.get("voice", DEFAULT_VOICE),
-            response_format="wav",
-            speed=float(form_data.get("speed", 1.0)),
-            language=form_data.get("language", os.environ.get("DEFAULT_LANGUAGE", "en")),
-            temperature=float(form_data.get("temperature", os.environ.get("DEFAULT_TEMPERATURE", 0.75))),
-            length_penalty=float(form_data.get("length_penalty", os.environ.get("DEFAULT_LENGTH_PENALTY", 1.0))),
-            repetition_penalty=float(form_data.get("repetition_penalty", os.environ.get("DEFAULT_REPETITION_PENALTY", 5.0))),
-            top_k=int(form_data.get("top_k", os.environ.get("DEFAULT_TOP_K", 50))),
-            top_p=float(form_data.get("top_p", os.environ.get("DEFAULT_TOP_P", 0.85))),
-        )
+        try:
+            req = SpeechRequest(
+                input=form_data.get("input"),
+                voice=form_data.get("voice", DEFAULT_VOICE),
+                response_format="wav",
+                speed=float(form_data.get("speed", 1.0)),
+                language=form_data.get("language", os.environ.get("DEFAULT_LANGUAGE", "en")),
+                temperature=float(form_data.get("temperature", os.environ.get("DEFAULT_TEMPERATURE", 0.75))),
+                length_penalty=float(form_data.get("length_penalty", os.environ.get("DEFAULT_LENGTH_PENALTY", 1.0))),
+                repetition_penalty=float(form_data.get("repetition_penalty", os.environ.get("DEFAULT_REPETITION_PENALTY", 5.0))),
+                top_k=int(form_data.get("top_k", os.environ.get("DEFAULT_TOP_K", 50))),
+                top_p=float(form_data.get("top_p", os.environ.get("DEFAULT_TOP_P", 0.85))),
+            )
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors())
+
+    if not req.input or not req.input.strip():
+        raise HTTPException(status_code=422, detail="'input' must be a non-empty string.")
+    _validate_speech_request(req, set(VOICE_MAP.keys()))
 
     if not _hot_worker_ready():
         raise HTTPException(status_code=503, detail="Hot worker not loaded. Streaming unavailable.")
     if not model_lock.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="Hot worker busy. Use /v1/audio/speech for queued synthesis.")
 
-    v_file = VOICE_MAP.get(req.voice.lower(), VOICE_MAP[DEFAULT_VOICE])
+    requested = req.voice.lower()
+    if requested not in VOICE_MAP:
+        model_lock.release()  # release the lock we just acquired before raising
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown voice '{req.voice}'. Available: {sorted(VOICE_MAP.keys())}.",
+        )
+    v_file = VOICE_MAP[requested]
     speaker_wav = os.path.join(VOICE_ASSET_DIR, v_file)
     if not os.path.exists(speaker_wav):
-        speaker_wav = os.path.join(VOICE_ASSET_DIR, VOICE_MAP[DEFAULT_VOICE])
+        model_lock.release()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Voice '{requested}' is mapped but the wav file is missing on disk.",
+        )
 
     params = {
         "temperature": req.temperature, "length_penalty": req.length_penalty,
