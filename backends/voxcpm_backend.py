@@ -107,6 +107,21 @@ class Backend(TTSBackend):
         import torch
         from huggingface_hub import snapshot_download
 
+        # VoxCPM2's torch.compile / CUDA Graph path is incompatible with our
+        # hot/cold multi-process subprocess pool under concurrent load —
+        # confirmed upstream in OpenBMB/VoxCPM#269. The maintainers explicitly
+        # recommend nano-vllm-voxcpm or vllm-omni for concurrent serving; our
+        # sibling repo uttera-tts-vllm wraps nano-vllm-voxcpm and is the
+        # production path. This backend is kept for dev / single-request /
+        # bench reproducibility and issues a runtime warning on load so
+        # nobody gets to production by accident.
+        print_err(
+            "VOXCPM BACKEND: ⚠ not recommended for concurrent production use. "
+            "Under multi-process load this backend triggers a CUDA Graph race "
+            "(OpenBMB/VoxCPM#269, confirmed upstream). For production use "
+            "uttera-tts-vllm (nano-vllm-voxcpm single-process) instead."
+        )
+
         if device.startswith("cuda") and not torch.cuda.is_available():
             print_err("VOXCPM BACKEND: CUDA unavailable — falling back to CPU.")
             device = "cpu"

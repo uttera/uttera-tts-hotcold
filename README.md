@@ -12,6 +12,8 @@ High-performance TTS API server with a hybrid "Hot/Cold" worker architecture and
 
 **Backends:** switch TTS engine with a single env var — `TTS_BACKEND=coqui` or `TTS_BACKEND=voxcpm`. See [docs/backends.md](docs/backends.md) for the full plugin architecture documentation.
 
+> ⚠️ **VoxCPM2 backend — not recommended for production.** VoxCPM2's `torch.compile` / CUDA Graph path is incompatible with hot/cold's multi-process subprocess pool and triggers a CUDA allocator race under concurrent load. Confirmed upstream by the VoxCPM maintainers in [OpenBMB/VoxCPM#269](https://github.com/OpenBMB/VoxCPM/issues/269), who explicitly recommend a single-process runtime (`nano-vllm-voxcpm` / `vllm-omni`) for concurrent serving. For VoxCPM2 in production use [`uttera-tts-vllm`](https://github.com/uttera/uttera-tts-vllm) (the nano-vllm-voxcpm wrapper) — it delivers 1024/1024 OK at burst@1024 on the same GPU. The voxcpm backend in this repo remains available for dev / single-request / bench purposes and ships a runtime warning at load time.
+
 > **Created and maintained by [Hugo L. Espuny](https://github.com/fakehec).**
 > Part of the [Uttera](https://uttera.ai) voice stack.
 > Source code licensed under the [Apache License 2.0](LICENSE).
