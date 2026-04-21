@@ -13,12 +13,16 @@
 # main_tts.py - Uttera TTS Hybrid-Worker Server (plugin-based backends)
 #
 # Package: uttera-tts-hotcold
-# Version: 2.4.1
+# Version: 2.4.2
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with pluggable engines (Coqui,
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.4.2 (2026-04-21): setup.sh was tracked with mode 100644 (no exec
+#   bit), so `./setup.sh` after a fresh `git clone` failed with
+#   "Permission denied". Marked executable in the index (100755); no
+#   runtime code change.
 # - 2.4.1 (2026-04-21): Fix NameError in the 2.4.0 /metrics handler:
 #   `_refresh_gauges_from_state()` referenced an undefined `voices`
 #   when setting `_VOICES_LOADED_GAUGE`. Corrected to `VOICE_MAP`.
@@ -410,7 +414,7 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "9004"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.4.1"
+SERVER_VERSION = "2.4.2"
 
 # Response-format whitelist. Anything outside this set is rejected up-front
 # at the wrapper instead of blowing up inside ffmpeg with a 500.
