@@ -1,6 +1,10 @@
-# Coqui TTS Local Server API Documentation
+# uttera-tts-hotcold API
 
-The server provides an OpenAI-compatible API for high-performance text-to-speech synthesis.
+The server provides an OpenAI-compatible API for high-performance
+text-to-speech synthesis with a hybrid hot/cold worker pool and
+pluggable backends (Coqui XTTS-v2, VoxCPM2). The active backend is
+selected at startup via the `TTS_BACKEND` env var — see
+[docs/backends.md](docs/backends.md).
 
 **Base URL:** `http://localhost:9004`
 
@@ -20,18 +24,26 @@ Generates audio from input text using the specified voice and personality parame
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `input` | String | **Required** | The text to be synthesized. |
-| `model` | String | `tts-1` | Model identifier (OpenAI compatible). |
-| `voice` | String | `alloy` | Voice ID from `voices.json` (e.g., `alloy`, `echo`, `nova`). |
-| `response_format`| String | `mp3` | Output format: `mp3`, `wav`, `opus`, `flac`. |
-| `speed` | Float | `1.0` | Synthesis speed (0.5 to 2.0). |
-| `language` | String | `en` | Language code (e.g., `en`, `es`, `fr`). |
-| `temperature` | Float | `0.75` | Controls randomness/expressiveness. |
-| `length_penalty` | Float | `1.0` | Controls the length of the output. |
-| `repetition_penalty`| Float | `5.0` | Prevents word/phrase repetition. |
-| `top_k` | Integer | `50` | Limits sampling to the top K tokens. |
-| `top_p` | Float | `0.85` | Nucleus sampling threshold. |
+| `input` | String | **Required** | The text to be synthesized. Missing / empty → HTTP 422 with the pydantic detail. |
+| `model` | String | `tts-1` | Model identifier (OpenAI-compatible). Ignored — the served model is fixed by the active backend. |
+| `voice` | String | `alloy` | Voice ID from `voices.json`. Unknown names → HTTP 400 with the list of available voices (since v2.2.0). |
+| `response_format`| String | `mp3` | One of `mp3`, `wav`, `pcm`, `opus`, `flac`. Any other value → HTTP 422. |
+| `speed` | Float | `1.0` | Playback rate. Valid range `[0.25, 4.0]` (OpenAI spec) — out-of-range → HTTP 422. |
+| `language` | String | `en` | Language code (e.g., `en`, `es`, `fr`). Coqui backend only; VoxCPM auto-detects. |
+| `temperature` | Float | `0.75` | Controls randomness/expressiveness. Valid range `[0.0, 2.0]` — out-of-range → HTTP 422. Coqui backend only. |
+| `length_penalty` | Float | `1.0` | Controls the length of the output. Coqui backend only. |
+| `repetition_penalty`| Float | `5.0` | Prevents word/phrase repetition. Coqui backend only. |
+| `top_k` | Integer | `50` | Limits sampling to the top K tokens. Coqui backend only. |
+| `top_p` | Float | `0.85` | Nucleus sampling threshold. Coqui backend only. |
+| `cfg_value` | Float | `2.0` | VoxCPM2 diffusion guidance scale. Valid range `[0.5, 5.0]` — out-of-range → HTTP 422. Ignored by Coqui backend. |
 | `cache` | Bool | `null` | Per-request cache opt-out. `false` (or `0`) tells the server neither to read from nor write to the audio cache for this request — privacy-sensitive workloads (medical/legal dictation, personal notes) can guarantee nothing is persisted on disk about this single call. `true` is the explicit opt-in; `null`/omitted follows the server default (cache on whenever `CACHE_TTL_MINUTES > 0`). See §3 for the equivalent HTTP-header mechanism and the `X-Cache` response header. |
+
+#### Multipart-only fields
+
+| Field | Type | Notes |
+| :--- | :--- | :--- |
+| `custom_voice_file` | file | **Canonical** name for the adhoc voice-cloning upload. The voice is cloned from this audio file for this single request — the server does not persist the sample or any derived latents. Cache is bypassed (`X-Cache: ADHOC`). Accepts any libsndfile-readable format (wav, flac, mp3, ogg, m4a, …). Empty / non-audio bodies → HTTP 400. |
+| `speaker_wav` | file | Legacy alias of `custom_voice_file`, symmetric with the `uttera-tts-vllm` sibling. Identical semantics. If both fields are present on the same request, `custom_voice_file` wins. |
 
 ### `POST /v1/audio/speech/stream`
 
@@ -111,9 +123,11 @@ Returns the binary audio file in the requested format.
 - `X-Route: HOT` — synthesised now by the persistent hot worker.
 - `X-Route: COLD-POOL` — synthesised now by a subprocess cold worker from the pool.
 - `X-Route: COLD-POOL>HOT` — cold worker failed mid-request and the item was re-queued and completed by the hot worker.
+- `X-Route: ADHOC` — synthesised now from an adhoc voice-cloning request (`custom_voice_file` / `speaker_wav`).
 - `X-Cache: HIT` — bytes came from the on-disk cache; no synthesis ran.
 - `X-Cache: MISS` — cache was enabled but this entry had to be synthesised.
 - `X-Cache: BYPASS` — the client asked us to skip the cache for this request.
+- `X-Cache: ADHOC` — adhoc voice-cloning request, cache was never eligible (the upload is unique so caching it would just write single-use junk entries).
 - `X-Cache: DISABLED` — the operator has disabled the cache globally (`CACHE_TTL_MINUTES <= 0`).
 
 ### Cache opt-out — per-request privacy control
@@ -151,13 +165,17 @@ Notes:
 - Adhoc voice-cloning requests (`custom_voice_file` or `speaker_wav` multipart upload) were already cache-ineligible before this feature — they behave identically with or without the `cache` field.
 - This server itself logs only the uvicorn access line (method, path, status, response time). The opt-out does not control logging done by reverse proxies or wrapping applications.
 
-### Error (500 Internal Server Error)
-Returns a JSON object with error details:
-```json
-{
-  "detail": "Error message description"
-}
-```
+### Error responses
+
+All errors return a JSON body `{"detail": "..."}` with a human-readable
+message. HTTP status codes follow standard semantics:
+
+| Code | When |
+| :--- | :--- |
+| **400** Bad Request | Unknown `voice` name, or an adhoc upload that fails audio decode. |
+| **422** Unprocessable Entity | `input` missing, or any of `speed`, `temperature`, `cfg_value`, `response_format` out of the documented range. |
+| **500** Internal Server Error | Unexpected exception inside the engine — if you hit this, open a bug report with the server logs. |
+| **503** Service Unavailable | Hot worker still loading on startup, or engine crashed and hasn't recovered. |
 
 ---
 
@@ -175,9 +193,11 @@ The default values for all parameters (except `input`) can be modified system-wi
 
 ## 5. Utility Endpoints
 
-### `GET /health`
+### `GET /health` and `HEAD /health`
 
-Returns server liveness and hot worker status. Suitable for proxies and Docker healthchecks.
+Returns server liveness and hot worker status. Both methods are
+accepted — `HEAD` returns the same headers with an empty body, useful
+for uptime probes that don't want to parse JSON.
 
 **Example Request:**
 ```bash
@@ -188,7 +208,8 @@ curl -X GET "http://localhost:9004/health"
 ```json
 {
   "status": "ok",
-  "version": "1.7.0",
+  "version": "2.3.0",
+  "backend": "coqui",
   "model": "tts_models/multilingual/multi-dataset/xtts_v2",
   "precision": "fp32",
   "hot_worker_loaded": true,
@@ -215,6 +236,9 @@ curl -X GET "http://localhost:9004/health"
 }
 ```
 
+The `model` field reports the concrete model the active backend has
+loaded (Coqui's XTTS-v2 path or VoxCPM's HF repo id) — fixed in v2.2.1.
+
 ### `GET /v1/models`
 
 OpenAI-compatible model listing. Returns the supported TTS model IDs.
@@ -229,11 +253,13 @@ curl -X GET "http://localhost:9004/v1/models"
 {
   "object": "list",
   "data": [
-    {"id": "tts-1", "object": "model", "created": 1677610602, "owned_by": "uttera-legacy"},
-    {"id": "tts-1-hd", "object": "model", "created": 1677610602, "owned_by": "uttera-legacy"}
+    {"id": "tts-1",    "object": "model", "created": 1677610602, "owned_by": "uttera"},
+    {"id": "tts-1-hd", "object": "model", "created": 1677610602, "owned_by": "uttera"}
   ]
 }
 ```
+
+*(`owned_by` was corrected from the pre-rebrand `"uttera-legacy"` to `"uttera"` in v2.2.0.)*
 
 ### `GET /v1/voices`
 
@@ -251,3 +277,28 @@ curl -X GET "http://localhost:9004/v1/voices"
 }
 ```
 *The list depends on the contents of `voices.json`. Custom voices can be added without modifying application code.*
+
+---
+
+## 6. CORS
+
+Disabled by default — this server is API-first, typically consumed by
+backend-to-backend callers or served through the Uttera gatekeeper.
+
+To enable browser-origin access, set `CORS_ALLOW_ORIGINS` to a
+comma-separated list of origins (or `*` for permissive):
+
+```bash
+CORS_ALLOW_ORIGINS="https://app.uttera.ai,https://dev.uttera.ai"
+# or:
+CORS_ALLOW_ORIGINS="*"
+```
+
+Methods, headers, and credentials follow the FastAPI `CORSMiddleware`
+defaults (allow all methods, allow all headers, credentials enabled).
+
+## 7. Authentication
+
+No authentication in this repo by design. Deploy behind the Uttera
+gatekeeper (or any reverse proxy) for API keys, quotas, and rate
+limits.

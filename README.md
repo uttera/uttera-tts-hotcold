@@ -34,13 +34,11 @@ bookmarks, and links keep working. If you still have
 git remote set-url origin https://github.com/uttera/uttera-tts-hotcold.git
 ```
 
-Upcoming in the next major release (v2.0.0):
-
-- **Plugin backend architecture**: the server will support multiple TTS
-  models (Coqui XTTS-v2 today, VoxCPM2 soon, others easily added) via a
-  single `TTS_BACKEND` env var.
-- **Apache-2.0 relicensing** — already applied in `master`; see
-  [HISTORY.md](HISTORY.md) and [NOTICE](NOTICE).
+The v2.0.0 release (April 2026) introduced the plugin backend
+architecture — Coqui XTTS-v2 and VoxCPM2 both live behind the
+`TTS_BACKEND` env var, selectable per deployment. The codebase is
+[Apache-2.0](LICENSE) since v2.0.0; see [HISTORY.md](HISTORY.md) and
+[NOTICE](NOTICE) for the full transition context.
 
 ## ⚖️ License & model licensing (IMPORTANT)
 
@@ -56,16 +54,67 @@ Model License (CPML).
 
 ## 🚀 Key Features
 
-- **Hybrid Concurrency:** 
-  - **Hot Worker:** Primary model resident in VRAM for sub-second (XTTSv2 ~1.0s) inference.
-  - **Cold Workers:** Spawns on-demand subprocesses on GPU when the main lane is busy.
-- **GPU Accelerated:** Native support for NVIDIA CUDA via `torch`, ensuring ultra-fast inference and high-quality synthesis.
-- **OpenAI Compatible:** Native support for OpenAI parameters (`model`, `voice`, `speed`, `response_format`). Includes `GET /v1/models` for client autodiscovery.
-- **Streaming:** `POST /v1/audio/speech/stream` delivers chunked WAV audio in real time via XTTS-v2's `inference_stream()` (Hot Lane only).
-- **Personality Tuning:** Full control over synthesis expressiveness via parameters like `temperature`, `top_p/k`, and `penalties`.
-- **Multilingual Excellence:** Native support for 16 languages: `en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja` (English by default).
-- **Intelligent Caching:** MD5-based caching for zero-latency repeated requests. Configurable TTL via `CACHE_TTL_MINUTES`. **Per-request opt-out** for privacy-sensitive calls via `{"cache": false}` body field or `Cache-Control: no-cache` header — nothing is persisted on disk about that specific request. Every response carries an `X-Cache` header (`HIT`/`MISS`/`BYPASS`/`DISABLED`) so the client can verify the decision. See [API.md §3](API.md#cache-opt-out--per-request-privacy-control) for the full contract.
-- **Health Endpoint:** `GET /health` exposes server version, model name, and hot worker status for proxies and Docker healthchecks.
+*Concurrency and engines*
+- **Hybrid hot/cold pool:**
+  - **Hot worker:** primary model resident in VRAM for sub-second
+    (XTTSv2 ~1.0 s) inference.
+  - **Cold workers:** on-demand subprocesses spawned on GPU when the
+    main lane is busy. Drains idle after `COLD_WORKER_IDLE_TIMEOUT`.
+- **Pluggable backends** (`TTS_BACKEND=coqui|voxcpm`) — switch engine
+  with one env var. See [docs/backends.md](docs/backends.md).
+- **GPU accelerated** via `torch` + CUDA (NVIDIA).
+
+*OpenAI-compatible API*
+- Standard params: `model`, `voice`, `speed`, `response_format`.
+- `GET /v1/models` for client autodiscovery (reports `tts-1` and
+  `tts-1-hd`, `owned_by: uttera`).
+- **Streaming** via `POST /v1/audio/speech/stream` (chunked WAV,
+  XTTS-v2 `inference_stream()`, Hot Lane only, no cache).
+- **Adhoc voice cloning** via `custom_voice_file` multipart upload on
+  `/v1/audio/speech` (legacy alias `speaker_wav` also accepted).
+  Upload lives one request, no state persisted.
+- 5 response formats: MP3, WAV, PCM, Opus, FLAC.
+
+*Validation and observability*
+- Strict validation on every knob — out-of-range returns HTTP 422
+  with a useful detail body:
+  - `speed` ∈ `[0.25, 4.0]` (OpenAI spec)
+  - `temperature` ∈ `[0.0, 2.0]` (Coqui safe range)
+  - `cfg_value` ∈ `[0.5, 5.0]` (VoxCPM safe range)
+  - `response_format` must be one of `mp3|wav|pcm|opus|flac`
+  - Unknown `voice` → HTTP 400 with the list of available voices
+    (v2.2.0 closed the silent-fallback regression)
+- `X-Route` response header — `HOT` / `COLD-POOL` / `COLD-POOL>HOT` /
+  `ADHOC` — tells the client which lane handled the request.
+- `X-Cache` response header — `HIT` / `MISS` / `BYPASS` / `ADHOC` /
+  `DISABLED` — verifies the cache decision without timing heuristics.
+
+*Personality*
+- `temperature`, `top_k`, `top_p`, `length_penalty`, `repetition_penalty`
+  exposed as request fields and env defaults.
+- 16-language XTTS-v2 coverage: `en, es, fr, de, it, pt, pl, tr, ru, nl,
+  cs, ar, zh-cn, hu, ko, ja` (English default).
+
+*Caching and privacy*
+- MD5-based audio cache keyed by `(model, voice, speed, format, params,
+  text)`. TTL via `CACHE_TTL_MINUTES`.
+- **Per-request cache opt-out** — three equivalent mechanisms:
+  JSON body `{"cache": false}`, multipart form `cache=false|0|no|off`,
+  or the standard HTTP header `Cache-Control: no-cache`. See
+  [API.md §3](API.md#cache-opt-out--per-request-privacy-control).
+- Adhoc voice-cloning requests always bypass the cache (`X-Cache: ADHOC`).
+
+*Operations*
+- `GET /health` **and `HEAD /health`** expose version, backend, model,
+  worker status, queue depth, VRAM — one struct for both proxies and
+  Docker healthchecks.
+- Opt-in `CORSMiddleware` via `CORS_ALLOW_ORIGINS` env var (disabled
+  by default — API-first deployments don't need it).
+- Canonical Uttera-stack port **`9004`** (TTS family). STT family
+  uses `9005`. Swapping `hotcold ↔ vllm` is a backend change, not a
+  port change.
+- Optional Redis self-registration for upstream router discovery —
+  same protocol as the sibling `uttera-tts-vllm` and STT servers.
 
 ## 📦 Installation & Setup
 
@@ -121,11 +170,14 @@ The following language codes are supported: `en, es, fr, de, it, pt, pl, tr, ru,
 
 | Method | Path | Description |
 | :--- | :--- | :--- |
-| `GET` | `/health` | Server liveness, version, and hot worker status. |
-| `GET` | `/v1/models` | OpenAI-compatible model list (`tts-1`, `tts-1-hd`). |
+| `GET` / `HEAD` | `/health` | Server liveness, version, backend, model, worker status, queue, VRAM. |
+| `GET` | `/v1/models` | OpenAI-compatible model list (`tts-1`, `tts-1-hd`; `owned_by: uttera`). |
 | `GET` | `/v1/voices` | List of available voice identifiers. |
-| `POST` | `/v1/audio/speech` | Standard TTS synthesis (Hot or Cold Lane, cached). |
-| `POST` | `/v1/audio/speech/stream` | Real-time streaming TTS (Hot Lane only, no cache). |
+| `POST` | `/v1/audio/speech` | Standard TTS synthesis (Hot or Cold Lane, cached; multipart supports adhoc voice cloning via `custom_voice_file`). |
+| `POST` | `/v1/audio/speech/stream` | Real-time streaming TTS (Hot Lane only, no cache, registered voices only). |
+
+See [API.md](API.md) for full request/response schemas, validation
+ranges, `X-Cache`/`X-Route` semantics, and the cache opt-out contract.
 
 ## 🔧 Troubleshooting
 
