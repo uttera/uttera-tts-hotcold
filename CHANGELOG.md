@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-04-21
+
+### Fixed
+
+- Typo in the 2.4.0 `/metrics` handler: `_refresh_gauges_from_state()`
+  referenced an undefined name `voices` when setting
+  `_VOICES_LOADED_GAUGE`. Corrected to `VOICE_MAP` (the actual voice
+  registry on this server). 2.4.0 booted fine but the first `/metrics`
+  scrape would `NameError`; scrapes now succeed.
+
 ## [2.4.0] - 2026-04-21
 
 Prometheus `/metrics` endpoint. Additive only — all existing

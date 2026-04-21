@@ -13,12 +13,16 @@
 # main_tts.py - Uttera TTS Hybrid-Worker Server (plugin-based backends)
 #
 # Package: uttera-tts-hotcold
-# Version: 2.4.0
+# Version: 2.4.1
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with pluggable engines (Coqui,
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.4.1 (2026-04-21): Fix NameError in the 2.4.0 /metrics handler:
+#   `_refresh_gauges_from_state()` referenced an undefined `voices`
+#   when setting `_VOICES_LOADED_GAUGE`. Corrected to `VOICE_MAP`.
+#   2.4.0 booted fine but the first scrape of /metrics would raise.
 # - 2.4.0 (2026-04-21): Prometheus /metrics endpoint. Exposes the
 #   shared uttera_tts_* HTTP + synthesis metrics (matching
 #   uttera-tts-vllm v1.4.0 label shapes), plus hot/cold-specific
@@ -406,7 +410,7 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "9004"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.4.0"
+SERVER_VERSION = "2.4.1"
 
 # Response-format whitelist. Anything outside this set is rejected up-front
 # at the wrapper instead of blowing up inside ffmpeg with a 500.
@@ -1406,7 +1410,7 @@ def _refresh_gauges_from_state() -> None:
     health_check() already computes — called on every /metrics scrape
     so we don't need to hook every state-change site."""
     _ENGINE_READY_GAUGE.set(1 if _backend is not None else 0)
-    _VOICES_LOADED_GAUGE.set(len(voices))
+    _VOICES_LOADED_GAUGE.set(len(VOICE_MAP))
     _COLD_WORKERS_ACTIVE_GAUGE.set(len(_pool_worker_tasks))
     _COLD_WORKERS_LOADING_GAUGE.set(_cold_workers_in_flight)
     _WORK_QUEUE_DEPTH_GAUGE.set(_work_queue.qsize() if _work_queue is not None else 0)
