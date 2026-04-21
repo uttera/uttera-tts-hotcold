@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-04-21
+
+Prometheus `/metrics` endpoint. Additive only — all existing
+endpoints unchanged.
+
+### Added
+
+- **`GET /metrics`** — OpenMetrics-format scrape endpoint using the
+  default `prometheus_client` global registry. Scrape with Telegraf's
+  `inputs.prometheus`, Prometheus itself, or any OpenMetrics
+  consumer.
+- **Shared `uttera_tts_*` series** — same names and label shapes as
+  `uttera-tts-vllm` v1.4.0, so a single Grafana dashboard can
+  aggregate across both backends. The `engine` label in
+  `uttera_tts_build_info` carries `TTS_BACKEND` (`coqui` / `voxcpm`)
+  so the same dashboard can slice by plugin.
+  - `uttera_tts_requests_total{endpoint, method, status}`
+  - `uttera_tts_request_duration_seconds{endpoint, method}`
+  - `uttera_tts_inflight_requests`
+  - `uttera_tts_synthesis_total{response_format, route, cache}` —
+    labels mirror the `X-Route` / `X-Cache` headers exactly. `route`
+    takes the additional values `COLD-POOL` and `COLD-POOL>HOT`
+    (vs the three values the vllm sibling emits).
+  - `uttera_tts_characters_synthesised_total{response_format}` —
+    billing / throughput proxy. Cache hits do NOT re-bill.
+  - `uttera_tts_voices_loaded` — Gauge of entries in `voices.json`.
+  - `uttera_tts_errors_total{type}` — decode / validation / model /
+    encoding.
+  - `uttera_tts_engine_ready`
+  - `uttera_tts_build_info{version, engine, model}`
+- **Hot/cold-specific metrics** (additive — do NOT exist on the
+  vllm sibling):
+  - `uttera_tts_requests_by_route_total{route}` — lane split
+    (HOT / COLD-POOL / COLD-POOL>HOT / CACHE / ADHOC)
+  - `uttera_tts_cold_workers_active`
+  - `uttera_tts_cold_workers_loading`
+  - `uttera_tts_cold_worker_pool_size_cap` — `COLD_POOL_SIZE`
+  - `uttera_tts_cold_workers_spawned_total` — monotonic, ticks at
+    the pool-manager spawn site after the new subprocess is added
+    to `_pool_worker_tasks`
+  - `uttera_tts_cold_worker_ema_start_seconds`
+  - `uttera_tts_work_queue_depth`
+  - `uttera_tts_work_queue_words` — sum of input-text word counts
+    waiting (the hotcold pool reasons about queue drain time in
+    words × seconds-per-word, not seconds of audio like its STT
+    sibling)
+  - `uttera_tts_load_score` — `[0.0, 1.0]` saturation
+  - `uttera_tts_hot_ema_spw` — rolling EMA of hot-lane seconds per
+    word
+  - `uttera_tts_vram_free_gb`
+  - `uttera_tts_vram_per_cold_worker_gb`
+- **Inference-duration histogram** gains lane-tagged ops:
+  - `op="synthesis_hot"` — the always-resident hot worker handled it
+  - `op="synthesis_cold"` — a cold-pool subprocess handled it
+  - `op="ffmpeg_encode"` — output-format transcoding
+  (streaming requests use `synthesis_hot` only, since the streaming
+  endpoint is hot-lane-only by construction)
+
+### Instrumentation notes
+
+- All live gauges refresh on every `/metrics` scrape via a single
+  `_refresh_gauges_from_state()` helper that mirrors what the
+  existing `health_check()` already computes. No new state-change
+  hooks scattered across the codebase.
+- `cold_workers_spawned_total` ticks at exactly one place: the
+  pool-manager spawn site, right after `_pool_worker_tasks.add(task)`.
+  Idle-exits have no matching counter — the churn pattern is
+  already inferrable from `(spawned_total - active - loading)`.
+- Cache hits increment `synthesis_total{route=CACHE,cache=HIT}`
+  and `requests_by_route_total{route=CACHE}` but do NOT tick
+  `characters_synthesised_total` — the caller already paid on
+  the original MISS that populated the cache.
+- Adhoc voice-cloning requests metric out with `route=ADHOC` (the
+  `X-Route` header the client sees) even if `item.route` was
+  internally `HOT`, so dashboards reflect the client's perspective.
+
+### Changed
+
+- **New runtime dep**: `prometheus-client>=0.20.0`.
+- **`SERVER_VERSION` bumped to `2.4.0`.**
+
+### Not changed
+
+- `/v1/audio/speech`, `/v1/audio/speech/stream`, `/v1/voices`,
+  `/v1/models`, `/health` behave identically to v2.3.0. The
+  `/health` body still reports the full `smart_routing` block for
+  callers that have it hardcoded.
+
 ## [2.3.0] - 2026-04-18
 
 ### Changed

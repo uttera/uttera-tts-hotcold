@@ -322,6 +322,50 @@ Both are persisted in host volumes and skipped on subsequent starts.
 
 Elite/custom voices are not provisioned automatically. Mount them into the container by placing your `.wav` files in `assets/voices/elite/` on the host — the volume mapping `./assets/voices:/app/assets/voices` picks them up automatically without rebuilding the image.
 
+## 📊 Observability (`/metrics`)
+
+`GET /metrics` returns Prometheus-format metrics for direct scraping
+by Prometheus, Telegraf's `inputs.prometheus` plugin, or any other
+OpenMetrics-compatible consumer. Metrics share the `uttera_tts_*`
+namespace with the sibling `uttera-tts-vllm` backend (same names
+and label shapes for the common series — the `engine` label in
+`uttera_tts_build_info` differentiates the variant, carrying the
+active `TTS_BACKEND` for this hotcold backend), plus this server's
+additional hot/cold pool telemetry.
+
+```toml
+[[inputs.prometheus]]
+  urls = ["http://tts-host:9004/metrics"]
+  interval = "15s"
+```
+
+Key series:
+
+| Metric | Type | Use |
+|---|---|---|
+| `uttera_tts_requests_total{endpoint,method,status}` | Counter | Per-endpoint request rate + status mix |
+| `uttera_tts_request_duration_seconds{endpoint,method}` | Histogram | HTTP p50/p95/p99 (total RTT) |
+| `uttera_tts_inflight_requests` | Gauge | Live load (hot + cold combined) |
+| `uttera_tts_requests_by_route_total{route}` | Counter | Lane split — `HOT` / `COLD-POOL` / `COLD-POOL>HOT` / `CACHE` / `ADHOC` |
+| `uttera_tts_synthesis_total{response_format,route,cache}` | Counter | Traffic mix across format × lane × cache decision (same semantics as `X-Route`/`X-Cache` headers) |
+| `uttera_tts_characters_synthesised_total{response_format}` | Counter | Input chars synthesised — billing / throughput proxy. Cache hits don't re-bill |
+| `uttera_tts_inference_duration_seconds{op}` | Histogram | Lane-tagged: `synthesis_hot` / `synthesis_cold` / `ffmpeg_encode` |
+| `uttera_tts_voices_loaded` | Gauge | Count of voices in `voices.json` |
+| `uttera_tts_cold_workers_active` | Gauge | Live cold subprocesses |
+| `uttera_tts_cold_workers_loading` | Gauge | Cold subprocesses booting |
+| `uttera_tts_cold_worker_pool_size_cap` | Gauge | `COLD_POOL_SIZE` |
+| `uttera_tts_cold_workers_spawned_total` | Counter | Monotonic spawn count (for churn dashboards) |
+| `uttera_tts_cold_worker_ema_start_seconds` | Gauge | Rolling EMA of cold-worker boot time |
+| `uttera_tts_work_queue_depth` | Gauge | Items queued |
+| `uttera_tts_work_queue_words` | Gauge | Words queued (for drain-time estimate) |
+| `uttera_tts_load_score` | Gauge | Saturation signal `[0.0, 1.0]` |
+| `uttera_tts_hot_ema_spw` | Gauge | Hot-lane seconds-per-word EMA |
+| `uttera_tts_vram_free_gb` | Gauge | GPU memory headroom |
+| `uttera_tts_vram_per_cold_worker_gb` | Gauge | Rolling EMA of VRAM per cold subprocess |
+| `uttera_tts_engine_ready` | Gauge | 1 if hot worker backend loaded |
+| `uttera_tts_errors_total{type}` | Counter | Typed errors (`decode` / `validation` / `model` / `encoding`) |
+| `uttera_tts_build_info{version,engine,model}` | Gauge | Version + engine (`coqui` / `voxcpm`) + model in the field (value always `1`) |
+
 ## 🔒 Security & Network Note
 By default, the server binds to **`127.0.0.1`** on port **`9004`**. 
 - To allow external network access, modify the `--host` parameter to `0.0.0.0` in the execution command or systemd unit.

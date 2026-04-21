@@ -13,12 +13,25 @@
 # main_tts.py - Uttera TTS Hybrid-Worker Server (plugin-based backends)
 #
 # Package: uttera-tts-hotcold
-# Version: 2.3.0
+# Version: 2.4.0
 # Maintainer: Uttera, Hugo L. Espuny
 # Description: High-performance TTS server with pluggable engines (Coqui,
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.4.0 (2026-04-21): Prometheus /metrics endpoint. Exposes the
+#   shared uttera_tts_* HTTP + synthesis metrics (matching
+#   uttera-tts-vllm v1.4.0 label shapes), plus hot/cold-specific
+#   pool telemetry: requests_by_route_total{route}, cold_workers_active,
+#   cold_workers_loading, cold_workers_spawned_total,
+#   cold_worker_ema_start_seconds, work_queue_depth,
+#   work_queue_words, load_score, hot_ema_spw, vram_free_gb,
+#   vram_per_cold_worker_gb. Inference duration histogram ops are
+#   lane-tagged: synthesis_hot / synthesis_cold / ffmpeg_encode.
+#   build_info's `engine` label carries TTS_BACKEND so dashboards
+#   can slice by coqui vs voxcpm. Additive — all existing endpoints
+#   unchanged. Scrape with Telegraf's inputs.prometheus or any
+#   OpenMetrics consumer.
 # - 2.3.0 (2026-04-18): Default port migrated from 5100 → 9004.
 #   Formalising the canonical Uttera-stack port scheme: all
 #   Text-to-Speech backends (hotcold + vllm) default to port 9004,
@@ -280,8 +293,16 @@ except ImportError:
 
 # The imports below sit intentionally after the transformers monkey-patch
 # above, so noqa: E402 is expected.
-from fastapi import FastAPI, UploadFile, HTTPException, Request, BackgroundTasks  # noqa: E402
+from fastapi import FastAPI, UploadFile, HTTPException, Request, BackgroundTasks, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from prometheus_client import (  # noqa: E402
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 from pydantic import BaseModel, ValidationError  # noqa: E402
 from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from starlette.datastructures import UploadFile as StarletteUploadFile  # noqa: E402
@@ -385,7 +406,7 @@ REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "9004"))
 REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
 REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
 
-SERVER_VERSION = "2.3.0"
+SERVER_VERSION = "2.4.0"
 
 # Response-format whitelist. Anything outside this set is rejected up-front
 # at the wrapper instead of blowing up inside ffmpeg with a 500.
@@ -516,6 +537,143 @@ _cold_spawn_lock: Optional[asyncio.Lock] = None
 
 # Redis client (None when REDIS_URL is not configured).
 _redis: Optional[aioredis.Redis] = None
+
+
+# -------------------------------
+# Prometheus metrics
+# -------------------------------
+#
+# Naming is shared with uttera-tts-vllm (`uttera_tts_*`) so a dashboard
+# that aggregates across both backends can use the same queries. The
+# `engine` label in uttera_tts_build_info differentiates the variant
+# (`coqui` or `voxcpm` for this hotcold backend, `nano-vllm-voxcpm`
+# on the sibling). Hot/cold-specific series (queue, cold workers,
+# lane routing, VRAM) are additive — they only exist on this server.
+
+# --- HTTP-level (shared shape with sibling vllm backend) ---
+_HTTP_REQUESTS_TOTAL = Counter(
+    "uttera_tts_requests_total",
+    "HTTP requests by endpoint, method and status code",
+    ["endpoint", "method", "status"],
+)
+_HTTP_REQUEST_DURATION = Histogram(
+    "uttera_tts_request_duration_seconds",
+    "HTTP request wall-clock duration in seconds",
+    ["endpoint", "method"],
+    buckets=(0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
+)
+_INFLIGHT_GAUGE = Gauge(
+    "uttera_tts_inflight_requests",
+    "Synthesis requests currently in flight (hot + cold lanes combined)",
+)
+_ENGINE_READY_GAUGE = Gauge(
+    "uttera_tts_engine_ready",
+    "1 if the hot worker backend is loaded and ready, 0 otherwise",
+)
+_VOICES_LOADED_GAUGE = Gauge(
+    "uttera_tts_voices_loaded",
+    "Number of voices registered (entries in voices.json)",
+)
+
+# --- Shared synthesis counters (same shape as vllm sibling) ---
+_SYNTHESIS_TOTAL = Counter(
+    "uttera_tts_synthesis_total",
+    "Synthesis requests broken down by output format, lane, and cache decision",
+    ["response_format", "route", "cache"],
+    # response_format ∈ {mp3, wav, pcm, opus, flac}
+    # route           ∈ {HOT, COLD-POOL, COLD-POOL>HOT, CACHE, ADHOC}
+    # cache           ∈ {HIT, MISS, BYPASS, ADHOC, DISABLED}
+)
+_CHARACTERS_SYNTHESISED_TOTAL = Counter(
+    "uttera_tts_characters_synthesised_total",
+    "Total input characters successfully synthesised (billing / throughput proxy)",
+    ["response_format"],
+)
+
+# --- Inference-duration histogram (per-op, lane-tagged) ---
+# op values:
+#   synthesis_hot    — the always-resident hot worker handled it
+#   synthesis_cold   — a cold-pool subprocess handled it
+#   ffmpeg_encode    — output-format transcoding (mp3/opus/flac)
+_INFERENCE_DURATION = Histogram(
+    "uttera_tts_inference_duration_seconds",
+    "Per-call inference latency in seconds, by op",
+    ["op"],
+    buckets=(0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
+)
+
+_ERRORS_TOTAL = Counter(
+    "uttera_tts_errors_total",
+    "Errors by type",
+    ["type"],   # decode | validation | model | encoding
+)
+
+_BUILD_INFO = Gauge(
+    "uttera_tts_build_info",
+    "Build metadata (label values carry version, engine and served model id)",
+    ["version", "engine", "model"],
+)
+
+# --- Hot/cold pool specific (additive vs the vllm sibling) ---
+_REQUESTS_BY_ROUTE_TOTAL = Counter(
+    "uttera_tts_requests_by_route_total",
+    "Successful synthesis requests broken down by which lane ultimately served them",
+    ["route"],   # HOT | COLD-POOL | COLD-POOL>HOT | CACHE | ADHOC
+)
+_COLD_WORKERS_ACTIVE_GAUGE = Gauge(
+    "uttera_tts_cold_workers_active",
+    "Cold worker subprocesses currently alive and consuming from the work queue",
+)
+_COLD_WORKERS_LOADING_GAUGE = Gauge(
+    "uttera_tts_cold_workers_loading",
+    "Cold worker subprocesses currently in their spawn/load phase",
+)
+_COLD_WORKER_POOL_CAP_GAUGE = Gauge(
+    "uttera_tts_cold_worker_pool_size_cap",
+    "Configured COLD_POOL_SIZE — ceiling on active + loading cold workers",
+)
+_COLD_WORKERS_SPAWNED_TOTAL = Counter(
+    "uttera_tts_cold_workers_spawned_total",
+    "Total cold worker subprocesses ever successfully spawned (monotonic)",
+)
+_COLD_EMA_START_GAUGE = Gauge(
+    "uttera_tts_cold_worker_ema_start_seconds",
+    "Rolling EMA of cold worker boot time (seconds from spawn to first-serve)",
+)
+_WORK_QUEUE_DEPTH_GAUGE = Gauge(
+    "uttera_tts_work_queue_depth",
+    "Items currently queued waiting for a hot or cold worker",
+)
+_WORK_QUEUE_WORDS_GAUGE = Gauge(
+    "uttera_tts_work_queue_words",
+    "Sum of input-text word counts waiting in the work queue (drain-estimate input)",
+)
+_LOAD_SCORE_GAUGE = Gauge(
+    "uttera_tts_load_score",
+    "Current load score in [0.0, 1.0]; 1.0 means the queue would take ROUTING_DRAIN_CAP_SECONDS or more to drain",
+)
+_HOT_EMA_SPW_GAUGE = Gauge(
+    "uttera_tts_hot_ema_spw",
+    "Rolling EMA of the hot worker's seconds per word (lower = faster)",
+)
+_VRAM_FREE_GB_GAUGE = Gauge(
+    "uttera_tts_vram_free_gb",
+    "Free VRAM on the serving GPU in GB",
+)
+_VRAM_PER_COLD_WORKER_GB_GAUGE = Gauge(
+    "uttera_tts_vram_per_cold_worker_gb",
+    "Rolling EMA of VRAM consumed by each cold worker subprocess, in GB",
+)
+
+_KNOWN_ENDPOINTS = {
+    "/v1/audio/speech",
+    "/v1/audio/speech/stream",
+    "/v1/voices",
+    "/admin/reload-voices",
+    "/v1/models",
+    "/health",
+    "/metrics",
+}
 
 
 async def _publish_to_redis(load_score: float, accepts: bool) -> None:
@@ -896,6 +1054,7 @@ async def _cold_pool_manager() -> None:
                 task = asyncio.create_task(_pool_worker_loop(worker, worker_idle_timeout))
                 _pool_worker_tasks.add(task)
                 task.add_done_callback(_pool_worker_tasks.discard)
+                _COLD_WORKERS_SPAWNED_TOTAL.inc()
                 print(
                     f"--- POOL MGR: pool worker ready, total_active={len(_pool_worker_tasks)}"
                     f", idle_timeout={worker_idle_timeout:.0f}s ---",
@@ -1049,6 +1208,45 @@ if _cors_origins_env:
     )
 
 
+# Prometheus middleware — tracks every HTTP request generically.
+# Synthesis-specific labels (response_format, route, cache decision,
+# character count) are attached inside the endpoint handlers.
+
+class _PrometheusMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        method = request.method
+        if path == "/metrics":
+            return await call_next(request)
+        endpoint = path if path in _KNOWN_ENDPOINTS else "other"
+        t0 = time.monotonic()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            elapsed = time.monotonic() - t0
+            _HTTP_REQUESTS_TOTAL.labels(
+                endpoint=endpoint, method=method, status=str(status)
+            ).inc()
+            _HTTP_REQUEST_DURATION.labels(
+                endpoint=endpoint, method=method
+            ).observe(elapsed)
+
+app.add_middleware(_PrometheusMiddleware)
+
+# Static gauges — set once at module import time. Backend selection
+# (coqui / voxcpm) becomes the `engine` label so dashboards can
+# filter by backend without a secondary lookup.
+_BUILD_INFO.labels(
+    version=SERVER_VERSION,
+    engine=os.environ.get("TTS_BACKEND", "coqui").strip().lower() or "coqui",
+    model=os.environ.get("TTS_MODEL", "xtts_v2"),
+).set(1)
+_COLD_WORKER_POOL_CAP_GAUGE.set(COLD_POOL_SIZE)
+
+
 # -------------------------------
 # 10b. Validation helpers
 # -------------------------------
@@ -1199,6 +1397,52 @@ def _cache_header_bypass(request: Request) -> bool:
     return any(tok in cc for tok in ("no-cache", "no-store"))
 
 
+# -------------------------------
+# 11b. /metrics (Prometheus)
+# -------------------------------
+
+def _refresh_gauges_from_state() -> None:
+    """Snapshot live routing state into Prometheus gauges. Mirrors what
+    health_check() already computes — called on every /metrics scrape
+    so we don't need to hook every state-change site."""
+    _ENGINE_READY_GAUGE.set(1 if _backend is not None else 0)
+    _VOICES_LOADED_GAUGE.set(len(voices))
+    _COLD_WORKERS_ACTIVE_GAUGE.set(len(_pool_worker_tasks))
+    _COLD_WORKERS_LOADING_GAUGE.set(_cold_workers_in_flight)
+    _WORK_QUEUE_DEPTH_GAUGE.set(_work_queue.qsize() if _work_queue is not None else 0)
+    _WORK_QUEUE_WORDS_GAUGE.set(_work_queue_words)
+    if _hot_ema_spw is not None:
+        _HOT_EMA_SPW_GAUGE.set(_hot_ema_spw)
+        drain = _work_queue_words * _hot_ema_spw
+        _LOAD_SCORE_GAUGE.set(min(drain / ROUTING_DRAIN_CAP_SECONDS, 1.0))
+    else:
+        _LOAD_SCORE_GAUGE.set(min(_work_queue_words / ROUTING_DRAIN_CAP_SECONDS, 1.0))
+    if _cold_ema_start is not None:
+        _COLD_EMA_START_GAUGE.set(_cold_ema_start)
+    _free = _free_vram_gb()
+    if _free is not None:
+        _VRAM_FREE_GB_GAUGE.set(_free)
+    if _cold_vram_ema_gb is not None:
+        _VRAM_PER_COLD_WORKER_GB_GAUGE.set(_cold_vram_ema_gb)
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus-format scrape endpoint.
+
+    Exposes the shared `uttera_tts_*` HTTP and synthesis metrics
+    plus this server's hot/cold-specific pool telemetry (cold
+    workers active/loading/spawned, queue depth, VRAM, load score).
+    Cardinality is bounded by design — no per-voice labels, no
+    per-request-id labels.
+
+    Scrape with Telegraf's `inputs.prometheus`, Prometheus itself,
+    or any OpenMetrics-compatible consumer.
+    """
+    _refresh_gauges_from_state()
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.post("/v1/audio/speech")
 async def create_speech(request: Request, background_tasks: BackgroundTasks):
     content_type = request.headers.get("Content-Type", "")
@@ -1321,6 +1565,13 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             if age_min < CACHE_TTL_MINUTES:
                 resp = FileResponse(final_output_path, media_type=f"audio/{req.response_format}")
                 resp.headers["X-Cache"] = "HIT"
+                # Cache hit — count once per request but don't re-bill
+                # characters (the caller already paid when the entry was
+                # first populated).
+                _SYNTHESIS_TOTAL.labels(
+                    response_format=req.response_format, route="CACHE", cache="HIT"
+                ).inc()
+                _REQUESTS_BY_ROUTE_TOTAL.labels(route="CACHE").inc()
                 return resp
             os.remove(final_output_path)
 
@@ -1341,6 +1592,8 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         _work_queue_words += word_count
         await _work_queue.put(item)
 
+        _INFLIGHT_GAUGE.inc()
+        _synth_t0 = time.monotonic()
         try:
             audio_bytes, route = await future
         except Exception as e:
@@ -1364,6 +1617,8 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
             if is_decode_error:
                 # Trim the full traceback to just the relevant line.
                 short = msg.strip().splitlines()[-1][:200] or "decode failed"
+                _ERRORS_TOTAL.labels(type="decode").inc()
+                _INFLIGHT_GAUGE.dec()
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -1371,10 +1626,18 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
                         f"audio stream or unsupported codec ({short})."
                     ),
                 )
+            _ERRORS_TOTAL.labels(type="model").inc()
+            _INFLIGHT_GAUGE.dec()
             raise HTTPException(status_code=500, detail=msg)
         finally:
             if custom_wav_path and os.path.exists(custom_wav_path):
                 os.unlink(custom_wav_path)
+
+        # Record the synthesis-phase duration (queue-put through
+        # future-resolved). Lane-tagged so dashboards can separate
+        # hot-lane vs cold-pool latency.
+        _op_synth = "synthesis_cold" if route in ("COLD-POOL",) else "synthesis_hot"
+        _INFERENCE_DURATION.labels(op=_op_synth).observe(time.monotonic() - _synth_t0)
 
         temp_wav = os.path.join(tempfile.gettempdir(), f"tts_{uuid.uuid4()}.wav")
         output_path = final_output_path if cache_effectively_on else os.path.join(
@@ -1382,8 +1645,11 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
         try:
             with open(temp_wav, "wb") as f:
                 f.write(audio_bytes)
-            convert_audio(temp_wav, output_path, req.response_format)
+            with _INFERENCE_DURATION.labels(op="ffmpeg_encode").time():
+                convert_audio(temp_wav, output_path, req.response_format)
         except Exception as e:
+            _ERRORS_TOTAL.labels(type="encoding").inc()
+            _INFLIGHT_GAUGE.dec()
             raise HTTPException(status_code=500, detail=str(e))
         finally:
             if os.path.exists(temp_wav):
@@ -1405,6 +1671,18 @@ async def create_speech(request: Request, background_tasks: BackgroundTasks):
     else:
         x_cache = "DISABLED"
     response.headers["X-Cache"] = x_cache
+
+    # Metrics: count the synthesis + lane, and bill characters. The
+    # route label matches the X-Route header exactly; adhoc requests
+    # override route=ADHOC on the metric so dashboards reflect what
+    # the client sees even though item.route may internally be HOT.
+    metric_route = "ADHOC" if adhoc else route
+    _SYNTHESIS_TOTAL.labels(
+        response_format=req.response_format, route=metric_route, cache=x_cache
+    ).inc()
+    _REQUESTS_BY_ROUTE_TOTAL.labels(route=metric_route).inc()
+    _CHARACTERS_SYNTHESISED_TOTAL.labels(response_format=req.response_format).inc(len(req.input))
+    _INFLIGHT_GAUGE.dec()
     return response
 
 # -------------------------------
@@ -1512,11 +1790,25 @@ async def create_speech_stream(request: Request):
     if req.inference_timesteps is not None:
         params["inference_timesteps"] = req.inference_timesteps
 
+    # Metrics: streaming is hot-lane-only, cache-disabled by construction.
+    _SYNTHESIS_TOTAL.labels(
+        response_format="wav", route="HOT", cache="DISABLED"
+    ).inc()
+    _REQUESTS_BY_ROUTE_TOTAL.labels(route="HOT").inc()
+    _CHARACTERS_SYNTHESISED_TOTAL.labels(response_format="wav").inc(len(req.input))
+    _INFLIGHT_GAUGE.inc()
+    _stream_t0 = time.monotonic()
+
     async def generate_and_release():
         try:
             async for chunk in stream_tts_hot_lane_async(req.input, req.language, speaker_wav, req.speed, params):
                 yield chunk
+            _INFERENCE_DURATION.labels(op="synthesis_hot").observe(time.monotonic() - _stream_t0)
+        except Exception:
+            _ERRORS_TOTAL.labels(type="model").inc()
+            raise
         finally:
+            _INFLIGHT_GAUGE.dec()
             model_lock.release()
 
     return StreamingResponse(generate_and_release(), media_type="audio/wav")

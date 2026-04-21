@@ -16,3 +16,8 @@ pydantic>=2.0
 python-multipart
 python-dotenv
 redis[asyncio]>=5.0.0
+
+# Prometheus /metrics endpoint — uses the default global registry.
+# Scrape with Telegraf's inputs.prometheus, Prometheus itself, or any
+# OpenMetrics-compatible consumer.
+prometheus-client>=0.20.0
