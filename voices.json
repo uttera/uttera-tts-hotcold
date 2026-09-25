@@ -4,14 +4,5 @@
     "fable":    "standard/fable.wav",
     "onyx":     "standard/onyx.wav",
     "nova":     "standard/nova.wav",
-    "shimmer":  "standard/shimmer.wav",
-    "narrator":   "elite/narrator.wav",
-    "voice-b":   "elite/redacted-voice.wav",
-    "voice-c":      "elite/redacted-voice.wav",
-    "voice-a": "elite/redacted-voice.wav",
-    "voice-d":  "elite/redacted.wav",
-    "voice-e":   "elite/redacted.wav",
-    "voice-f":     "elite/redacted.wav",
-    "voice-g":     "elite/redacted.wav",
-    "voice-h":   "elite/redacted.wav"
+    "shimmer":  "standard/shimmer.wav"
 }

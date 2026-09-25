@@ -6,7 +6,7 @@ never repeats across the 160 requests.
 
 Usage:
     python bench_160x40w.py [URL]
-    python bench_160x40w.py http://sphinx:9004/v1/audio/speech
+    python bench_160x40w.py http://localhost:9004/v1/audio/speech
 """
 import asyncio
 import glob

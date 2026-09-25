@@ -105,8 +105,8 @@
 #      and lets the backend decoder surface format errors as HTTP 400.
 #   9. HEAD /health returned HTTP 405. Now accepts both GET and HEAD
 #      via `@app.api_route(methods=["GET", "HEAD"])`.
-#  10. `/v1/models` `owned_by` was still the stale `"uttera-legacy"`
-#      string from the pre-rebrand release. Now `"uttera"`.
+#  10. `/v1/models` `owned_by` was still a stale pre-rebrand value.
+#      Now `"uttera"`.
 #  11. No CORS middleware. Added opt-in `CORSMiddleware` gated on
 #      `CORS_ALLOW_ORIGINS` env var (comma-separated or `"*"`).
 #      Disabled by default — API-first deployments don't need it.
@@ -150,7 +150,7 @@
 #   * Requirements split per backend: requirements-coqui.txt,
 #     requirements-voxcpm.txt. setup.sh accepts a backend arg; Docker
 #     builds accept --build-arg TTS_BACKEND.
-#   * Rebranded from "Uttera / Coqui TTS Server" to Uttera. Repo moved
+#   * Rebranded from the pre-rebrand "Coqui TTS Server" to Uttera. Repo moved
 #     to github.com/uttera/uttera-tts-hotcold. License set to Apache-2.0.
 #   Added: CI workflow (lint + structure + optional GPU smoke),
 #     bench_160x40w.py + 40-word prompt corpus + 160 WAV references,

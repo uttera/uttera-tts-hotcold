@@ -259,7 +259,7 @@ curl -X GET "http://localhost:9004/v1/models"
 }
 ```
 
-*(`owned_by` was corrected from the pre-rebrand `"uttera-legacy"` to `"uttera"` in v2.2.0.)*
+*(`owned_by` was corrected from a stale pre-rebrand value to `"uttera"` in v2.2.0.)*
 
 ### `GET /v1/voices`
 

@@ -238,7 +238,7 @@ validation run against v2.1.0. All fixed.
   `# Version:` comment had been stuck at `2.0.0` since v2.0.0 —
   resynced.
 - **`/v1/models` `owned_by`** now `"uttera"` (was the stale
-  `"uttera-legacy"` left over from the pre-rebrand release).
+  a stale pre-rebrand value left over from an earlier release).
 
 ### Breaking?
 
@@ -328,13 +328,13 @@ been in every public release of this repo.
 ## [2.0.0] - 2026-04-16
 
 First Uttera-branded release. Plugin-based multi-backend architecture, full
-rebrand from "Uttera / Coqui TTS Server" to "Uttera TTS", relicensed to
+rebrand from the pre-rebrand "Coqui TTS Server" to "Uttera TTS", relicensed to
 Apache-2.0, and a second built-in backend (VoxCPM2).
 
 ### BREAKING
 - **Project rebranded to Uttera.** Repository moved to
   `https://github.com/uttera/uttera-tts-hotcold`. Docker image, systemd unit,
-  and documentation renamed accordingly. Legacy clone URLs and Uttera
+  and documentation renamed accordingly. Legacy clone URLs and pre-rebrand
   branding removed.
 - **License changed to Apache-2.0** (was unlicensed / proprietary in earlier
   releases). See `LICENSE` and `NOTICE`. The Coqui XTTS-v2 model weights
@@ -509,7 +509,7 @@ Apache-2.0, and a second built-in backend (VoxCPM2).
 - **`cold_workers_in_flight` added to `GET /health`:** The count of currently active cold lane subprocesses is now exposed under `smart_routing` alongside `vram_free_gb` and `vram_sufficient_for_cold`, consistent with whisper-stt-local-server v1.4.7.
 
 ### Validated
-- 40-clip Spanish stress test comparing v1.5.7 (local, 16.99 GB VRAM free) vs v1.4.10 (sphinx, production, caché limpia). Four waves: 10 concurrent, 10 staggered @0.2s, 10 concurrent, 10 staggered @0.1s.
+- 40-clip Spanish stress test comparing v1.5.7 (local, 16.99 GB VRAM free) vs v1.4.10 (production, clean cache). Four waves: 10 concurrent, 10 staggered @0.2s, 10 concurrent, 10 staggered @0.1s.
   - **v1.5.7: 40/40 OK, 0 errores.** VRAM pre-check + cold→hot fallback absorben toda la carga: hot lane avg 4-9s, cold lane avg 30-49s, cold EMA calibrado en ~30s, máx 3 workers concurrentes con `MIN_COLD_VRAM_GB=5.0`.
   - **v1.4.10: 13/40 OK, 27/40 ERR HTTP 500.** Sin VRAM pre-check ni fallback, los cold workers hacen OOM al cargar XTTS-v2 simultáneamente y el error llega directamente al cliente. W3 (10 concurrent con hot ocupado) produjo 9/10 errores. Los 13 OK corresponden exactamente a las requests que pillaron el hot lane libre.
   - El test cuantifica el impacto real de v1.5.0–v1.5.6: **tasa de error 67.5% → 0%** bajo carga concurrente.
@@ -668,8 +668,8 @@ Apache-2.0, and a second built-in backend (VoxCPM2).
 ## [1.1.4] - 2026-02-28
 
 ### Added
-- **Stable Production Release:** Golden version for the Uttera.
-- Performance verified on Sphinx and local nodes (3 concurrent streams in ~18s).
+- **Stable Production Release:** Golden production release.
+- Performance verified on production and local nodes (3 concurrent streams in ~18s).
 - Full architectural symmetry between production and repository branches.
 
 ### Changed
@@ -694,9 +694,9 @@ Apache-2.0, and a second built-in backend (VoxCPM2).
 ## [1.1.0] - 2026-02-28
 
 ### Added
-- Full architectural restoration from production `v123` reference (Sphinx node).
+- Full architectural restoration from the production reference.
 - Implementation of `asyncio.create_subprocess_exec` with pipe consumption to bypass GIL and prevent buffer deadlocks.
-- Support for Stark Elite voice gallery (a character, a voice, a character, etc.) and Spanish by default.
+- Support for a custom voice gallery (bring-your-own reference samples) and Spanish by default.
 - Modernized `requirements.txt` and `setup.sh` with hotfixes for Python 3.14 stability.
 
 ## [1.0.6] - 2026-02-28
