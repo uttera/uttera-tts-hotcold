@@ -283,7 +283,7 @@ curl -X GET "http://localhost:9004/v1/voices"
 ## 6. CORS
 
 Disabled by default — this server is API-first, typically consumed by
-backend-to-backend callers or served through the Uttera gatekeeper.
+backend-to-backend callers or served through a reverse proxy.
 
 To enable browser-origin access, set `CORS_ALLOW_ORIGINS` to a
 comma-separated list of origins (or `*` for permissive):
@@ -299,6 +299,5 @@ defaults (allow all methods, allow all headers, credentials enabled).
 
 ## 7. Authentication
 
-No authentication in this repo by design. Deploy behind the Uttera
-gatekeeper (or any reverse proxy) for API keys, quotas, and rate
-limits.
+No authentication in this repo by design. Deploy behind a reverse proxy
+or API gateway for API keys, quotas, and rate limits.

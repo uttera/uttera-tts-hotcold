@@ -23,9 +23,7 @@ services:
       - COLD_WORKER_IDLE_STAGGER=10
       - DEBUG=false
       - COQUI_TOS_AGREED=1
-      # - REDIS_URL=redis://redis:6379
-      # - NODE_HOST=uttera-tts-hotcold
-      # - NODE_PORT=9004
+      # - UTTERA_OFFLINE=1   # local-cache-only model loading (opt-in)
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     devices:

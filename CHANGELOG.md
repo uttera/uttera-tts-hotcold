@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-09-25
+
+Standalone build. One process, the configured backend (Coqui XTTS-v2 or
+VoxCPM2), an OpenAI-compatible API and a `/health`. Run one, or several
+behind any load balancer.
+
+### Added
+
+- **Optional offline mode** — `UTTERA_OFFLINE=1` forces transformers /
+  huggingface_hub / modelscope to use only the local cache (a validated model
+  won't silently re-fetch from the Hub on restart). OFF by default.
+
+### Removed
+
+- The optional Redis self-registration loop and its env vars
+  (`REDIS_URL` / `NODE_*`). `/health` still reports a self-load signal
+  (`load_score` / `accepts_requests`) for a fronting proxy that wants it;
+  use a reverse proxy or load balancer for discovery.
+
 ## [2.4.2] - 2026-04-21
 
 ### Fixed
@@ -119,8 +138,8 @@ endpoints unchanged.
 - **Default port migrated from `5100` → `9004`.** Formalising the
   canonical Uttera-stack port scheme: all Text-to-Speech backends
   (both `uttera-tts-hotcold` and `uttera-tts-vllm`) default to port
-  `9004`, all Speech-to-Text backends default to `9005`. The
-  Gatekeeper and clients route by service family — swapping `hotcold`
+  `9004`, all Speech-to-Text backends default to `9005`. A reverse
+  proxy and clients route by service family — swapping `hotcold`
   ↔ `vllm` is a backend change, not a port change.
 
   **Why not keep `5100`:** although `5100` itself had no mainstream
@@ -133,7 +152,7 @@ endpoints unchanged.
   **Artefacts updated:** `main_tts.py` runtime default,
   `cold_worker_tts.py` (any port references), `README.md`, `API.md`,
   `Dockerfile` `EXPOSE`, `docker-compose.yml` port mapping,
-  `.env.example` `PORT` and `NODE_PORT`, `docs/backends.md` examples,
+  `.env.example` `PORT`, `docs/backends.md` examples,
   `tests/bench_160x40w.py` default URL, `setup.sh` post-install
   hint, `.github/workflows/ci.yml` health probes + speech test URLs,
   issue template health curl.
@@ -142,7 +161,7 @@ endpoints unchanged.
 
 No code change is required for deployments that override `PORT` via
 env var. For deployments running on the old default:
-- **If the Gatekeeper was pointing at `:5100`:** repoint it at `:9004`.
+- **If your reverse proxy was pointing at `:5100`:** repoint it at `:9004`.
 - **If you need to keep `:5100`:** set `PORT=5100` in the server's env.
 - **Docker users:** update your `-p` flag or `docker-compose.yml`.
 
@@ -452,19 +471,17 @@ Apache-2.0, and a second built-in backend (VoxCPM2).
 ## [1.6.4] - 2026-04-10
 
 ### Added
-- **Redis self-registration:** Each tick of `_cold_pool_manager` publishes
-  `{load_score, accepts_requests, host, port, version, ts}` to `tts:nodes:{NODE_ID}`
-  with TTL = 3 × pool manager interval. Opt-in via `REDIS_URL` env var; silently disabled
-  if unset or unreachable. Key deleted on clean shutdown. Adds `redis[asyncio]>=5.0.0`
-  to requirements.
+- **Optional self-registration hook** for an external load balancer — each tick
+  of `_cold_pool_manager` published the node's load state. Removed in 2.6.0; the
+  server is now standalone.
 
 ## [1.6.3] - 2026-04-10
 
 ### Added
 - **Routing fields in `/health`:** `routing.load_score` (0–1, based on queue drain estimate
   divided by `ROUTING_DRAIN_CAP_SECONDS`, default 120) and `routing.accepts_requests`
-  (false when model not loaded, errored, or score = 1.0). Designed for front-end router
-  (OpenResty Gatekeeper) node selection.
+  (false when model not loaded, errored, or score = 1.0). Designed for a
+  front-end load balancer's node selection.
 
 ## [1.6.2] - 2026-04-10
 

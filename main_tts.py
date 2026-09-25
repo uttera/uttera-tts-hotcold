@@ -13,12 +13,21 @@
 # main_tts.py - Uttera TTS Hybrid-Worker Server (plugin-based backends)
 #
 # Package: uttera-tts-hotcold
-# Version: 2.4.2
+# Version: 2.6.0
 # Maintainer: Hugo L. Espuny
 # Description: High-performance TTS server with pluggable engines (Coqui,
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
 # CHANGELOG:
+# - 2.6.0 (2026-09-25): Standalone build. The server is now self-contained —
+#   one process, the configured backend (Coqui XTTS-v2 or VoxCPM2), an
+#   OpenAI-compatible API and a /health. Removed the optional Redis
+#   self-registration loop and its env vars (REDIS_URL / NODE_*): run one, or
+#   several behind any load balancer. /health still reports a self-load signal
+#   (load_score / accepts_requests) for a fronting proxy that wants it. Added
+#   an optional offline mode: UTTERA_OFFLINE=1 forces transformers /
+#   huggingface_hub / modelscope to use only the local cache (a validated model
+#   won't silently re-fetch on restart); OFF by default.
 # - 2.4.2 (2026-04-21): setup.sh was tracked with mode 100644 (no exec
 #   bit), so `./setup.sh` after a fresh `git clone` failed with
 #   "Permission denied". Marked executable in the index (100755); no
@@ -43,7 +52,7 @@
 # - 2.3.0 (2026-04-18): Default port migrated from 5100 → 9004.
 #   Formalising the canonical Uttera-stack port scheme: all
 #   Text-to-Speech backends (hotcold + vllm) default to port 9004,
-#   all Speech-to-Text backends default to 9005. The Gatekeeper and
+#   all Speech-to-Text backends default to 9005. A reverse proxy and
 #   clients route by service family (TTS/STT) — swapping hotcold ↔
 #   vllm is a backend change, not a port change. Rationale for
 #   leaving 5100: while 5100 itself had no mainstream collisions,
@@ -52,11 +61,11 @@
 #   assignment. Updated artefacts: `main_tts.py` runtime default,
 #   `cold_worker_tts.py` (if port-aware), README + API.md URLs,
 #   Dockerfile EXPOSE, docker-compose port mapping, CI workflow
-#   health probes + speech sample test, .env.example `PORT` and
-#   `NODE_PORT`, docs/backends.md examples, `tests/bench_160x40w.py`
+#   health probes + speech sample test, .env.example `PORT`,
+#   docs/backends.md examples, `tests/bench_160x40w.py`
 #   default URL, `setup.sh` post-install hint. Migration for
 #   deployments on the old default: set `PORT=5100` in env to keep
-#   the legacy endpoint, or repoint the Gatekeeper at `:9004`.
+#   the legacy endpoint, or repoint your reverse proxy at `:9004`.
 # - 2.2.1 (2026-04-18): /health `model` field now reports the actual
 #   model the active backend is running, not the stale `TTS_MODEL`
 #   env var. v2.2.0 showed `tts_models/multilingual/multi-dataset/xtts_v2`
@@ -179,11 +188,9 @@
 #   Dependencies: torch pinned to >=2.9.0,<2.10.0 (torch 2.10+ switches
 #   torchaudio to torchcodec backend requiring CUDA 13 NPP not yet widely
 #   available). torchaudio and torchcodec pinned to matching ranges.
-# - 1.6.4 (2026-04-10): Redis self-registration. Each tick of _cold_pool_manager
-#   publishes {load_score, accepts_requests, host, port, version, ts} to
-#   tts:nodes:{NODE_ID} with TTL=3×interval. Opt-in via REDIS_URL env var;
-#   silently disabled if unset or unreachable. Key deleted on clean shutdown.
-#   Adds redis[asyncio]>=5.0.0 to requirements.txt.
+# - 1.6.4 (2026-04-10): Optional self-registration hook for an external load
+#   balancer (each tick of _cold_pool_manager published the node's load state).
+#   Removed in 2.6.0 — the server is now standalone.
 # - 1.6.3 (2026-04-10): Add routing.load_score and routing.accepts_requests to
 #   /health for front-end router support. load_score is drain_estimate/cap (0–1),
 #   accepts_requests is False when model not loaded, errored, or score=1.0.
@@ -277,7 +284,6 @@ import subprocess
 from contextlib import asynccontextmanager
 from typing import Optional, Set
 from dotenv import load_dotenv
-import redis.asyncio as aioredis
 
 # Load .env
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -285,6 +291,17 @@ for _env_path in [os.path.join(BASE_DIR, ".env"), os.path.join(os.path.dirname(B
     if os.path.exists(_env_path):
         load_dotenv(_env_path)
         break
+
+# --- Optional offline mode (opt-in) -------------------------------------------
+# A model that has already been validated should not silently re-fetch from the
+# Hub on a restart. Set UTTERA_OFFLINE=1 to force transformers / huggingface_hub
+# / modelscope to use ONLY the local cache. Read at import time, so set before
+# the heavy imports below. OFF by default so a fresh install can download the
+# model on first run.
+if os.environ.get("UTTERA_OFFLINE", "").strip().lower() in ("1", "true", "yes", "on"):
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    os.environ.setdefault("MODELSCOPE_OFFLINE", "1")
 
 warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
 warnings.filterwarnings("ignore", message=".*_register_pytree_node.*")
@@ -399,22 +416,13 @@ MIN_COLD_VRAM_GB = float(os.environ.get("MIN_COLD_VRAM_GB", "2.5"))
 # ~2.5 GB); scale via env if a backend ever needs to override.
 COLD_VRAM_HEADROOM_GB = float(os.environ.get("COLD_VRAM_HEADROOM_GB", "2.0"))
 
-# Drain time (seconds) considered 100% load for routing score. Requests with a
-# drain estimate at or above this cap receive load_score=1.0 and the node is
-# excluded from routing until the queue clears.
+# Drain time (seconds) that counts as 100% load for the self-reported load
+# score. A queue whose drain estimate reaches this cap reports load_score=1.0
+# (exposed in /health and /metrics as a self-load signal for a fronting load
+# balancer, if any).
 ROUTING_DRAIN_CAP_SECONDS = float(os.environ.get("ROUTING_DRAIN_CAP_SECONDS", "120"))
 
-# Redis self-registration (opt-in). If REDIS_URL is unset, publishing is skipped.
-# NODE_ID defaults to HOST:PORT. TTL is set to 3× the pool manager interval so
-# the key expires automatically if the node dies or Redis becomes unreachable.
-REDIS_URL     = os.environ.get("REDIS_URL", "")
-REDIS_NODE_ID = os.environ.get("NODE_ID", "") or f"{os.environ.get('NODE_HOST', 'localhost')}:{os.environ.get('NODE_PORT', '9004')}"
-REDIS_NODE_HOST = os.environ.get("NODE_HOST", "localhost")
-REDIS_NODE_PORT = int(os.environ.get("NODE_PORT", "9004"))
-REDIS_KEY     = f"tts:nodes:{REDIS_NODE_ID}"
-REDIS_TTL     = max(2, int(COLD_POOL_MANAGER_INTERVAL * 3 + 1))  # seconds
-
-SERVER_VERSION = "2.4.2"
+SERVER_VERSION = "2.6.0"
 
 # Response-format whitelist. Anything outside this set is rejected up-front
 # at the wrapper instead of blowing up inside ffmpeg with a 500.
@@ -542,9 +550,6 @@ _cache_locks: dict = {}
 # Shared work queue + spawn lock (initialised in _lifespan).
 _work_queue: Optional[asyncio.Queue] = None
 _cold_spawn_lock: Optional[asyncio.Lock] = None
-
-# Redis client (None when REDIS_URL is not configured).
-_redis: Optional[aioredis.Redis] = None
 
 
 # -------------------------------
@@ -682,24 +687,6 @@ _KNOWN_ENDPOINTS = {
     "/health",
     "/metrics",
 }
-
-
-async def _publish_to_redis(load_score: float, accepts: bool) -> None:
-    """Publish this node's routing state to Redis. Fails silently if unavailable."""
-    if _redis is None:
-        return
-    try:
-        payload = json.dumps({
-            "load_score":       load_score,
-            "accepts_requests": accepts,
-            "host":             REDIS_NODE_HOST,
-            "port":             REDIS_NODE_PORT,
-            "version":          SERVER_VERSION,
-            "ts":               time.time(),
-        })
-        await _redis.set(REDIS_KEY, payload, ex=REDIS_TTL)
-    except Exception:
-        pass  # Redis unavailability must never affect request serving
 
 
 def _count_words(text: str) -> int:
@@ -1036,8 +1023,7 @@ async def _pool_worker_loop(worker: _ColdTTSWorker, idle_timeout: float) -> None
 async def _cold_pool_manager() -> None:
     """
     Background task: dynamically spawns cold workers based on current queue depth.
-    Wakes every COLD_POOL_MANAGER_INTERVAL seconds. Also publishes routing state
-    to Redis on every tick (no-op when REDIS_URL is not configured).
+    Wakes every COLD_POOL_MANAGER_INTERVAL seconds.
     """
     while True:
         await asyncio.sleep(COLD_POOL_MANAGER_INTERVAL)
@@ -1070,15 +1056,6 @@ async def _cold_pool_manager() -> None:
                 )
             except Exception as e:
                 print(f"--- POOL MGR: spawn failed: {e} ---", flush=True)
-
-        # Publish routing state to Redis on every tick (no-op if not configured).
-        drain = (_work_queue_words * _hot_ema_spw) if _hot_ema_spw else None
-        if drain is not None:
-            load_score = round(min(drain / ROUTING_DRAIN_CAP_SECONDS, 1.0), 3)
-        else:
-            load_score = round(min(_work_queue_words / 500.0, 1.0), 3)
-        accepts = _hot_worker_ready() and load_score < 1.0
-        await _publish_to_redis(load_score, accepts)
 
 # -------------------------------
 # 10. Startup Warmup
@@ -1160,19 +1137,10 @@ async def _warmup_cold_ema() -> None:
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
-    global _work_queue, _cold_spawn_lock, _redis
+    global _work_queue, _cold_spawn_lock
 
     _work_queue = asyncio.Queue()
     _cold_spawn_lock = asyncio.Lock()
-
-    if REDIS_URL:
-        try:
-            _redis = aioredis.from_url(REDIS_URL, decode_responses=True)
-            await _redis.ping()
-            print(f"Redis connected: {REDIS_URL} | key={REDIS_KEY} ttl={REDIS_TTL}s", flush=True)
-        except Exception as e:
-            print(f"Redis unavailable ({e}) — running without registration.", flush=True)
-            _redis = None
 
     await _warmup_hot_ema()
     await _warmup_cold_ema()
@@ -1187,13 +1155,6 @@ async def _lifespan(application: FastAPI):
     for task in list(_pool_worker_tasks):
         task.cancel()
     await asyncio.gather(hot_task, manager_task, *list(_pool_worker_tasks), return_exceptions=True)
-
-    if _redis:
-        try:
-            await _redis.delete(REDIS_KEY)
-        except Exception:
-            pass
-        await _redis.aclose()
 
 
 app = FastAPI(title="Uttera TTS Server", version=SERVER_VERSION, lifespan=_lifespan)

@@ -113,8 +113,12 @@ Model License (CPML).
 - Canonical Uttera-stack port **`9004`** (TTS family). STT family
   uses `9005`. Swapping `hotcold ↔ vllm` is a backend change, not a
   port change.
-- Optional Redis self-registration for upstream router discovery —
-  same protocol as the sibling `uttera-tts-vllm` and STT servers.
+- **Standalone** — no service discovery or external coordination. Run
+  one, or several behind any load balancer. `/health` reports a self-load
+  signal (`load_score` / `accepts_requests`) for a fronting proxy that
+  wants it.
+- **Optional offline mode** (`UTTERA_OFFLINE=1`) — a validated model won't
+  silently re-fetch from the Hub on restart. OFF by default.
 
 ## 📦 Installation & Setup
 
@@ -213,11 +217,9 @@ The server includes a `.env.example` file. You can create a **`.env`** file in t
 | `COLD_WORKER_IDLE_TIMEOUT` | `60` | Seconds before idle cold worker exits. |
 | `COLD_WORKER_IDLE_STAGGER` | `10` | Stagger per worker slot to avoid mass die-off. |
 | `MIN_COLD_VRAM_GB` | `2.5` | Min free VRAM to spawn a cold worker (0=disable). |
-| `ROUTING_DRAIN_CAP_SECONDS` | `120` | Queue drain time considered 100% load. |
-| `REDIS_URL` | *(empty)* | Redis URL for node self-registration (opt-in). |
-| `NODE_HOST` | `localhost` | Host advertised to Redis for Gatekeeper routing. |
-| `NODE_PORT` | `9004` | Port advertised to Redis for Gatekeeper routing. |
-| `DEBUG` | `false` | Set to `true` to enable worker routing traces. |
+| `ROUTING_DRAIN_CAP_SECONDS` | `120` | Queue drain time reported as 100% load in `/health` and `/metrics`. |
+| `UTTERA_OFFLINE` | `0` | `1` forces local-cache-only model loading. |
+| `DEBUG` | `false` | Set to `true` to enable worker traces. |
 | `VENV_PYTHON` | *(auto-detected)* | Absolute path to the venv Python executable. |
 
 *See `.env.example` for the full list including personality defaults (`DEFAULT_TEMPERATURE`, etc.).*

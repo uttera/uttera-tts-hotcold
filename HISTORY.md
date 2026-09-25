@@ -94,10 +94,9 @@ servers ship today under that umbrella:
 - **`uttera-stt-vllm`** — STT sibling of `uttera-tts-vllm`
   (Whisper-v3-turbo via vLLM's native speech path).
 
-All four share a common health-check schema, Redis self-registration
-protocol, cache opt-out semantics, and sit behind the same
-[echo-gatekeeper](https://github.com/uttera) for tier gating, rate
-limits, and billing.
+All four share a common health-check schema and cache opt-out semantics,
+and each runs standalone behind whatever reverse proxy or API gateway you
+put in front of it for tier gating, rate limits, and keys.
 
 The original design philosophy, set during the first hot/cold
 experiments, remains unchanged:
