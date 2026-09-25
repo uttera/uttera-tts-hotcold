@@ -3,11 +3,28 @@
 This document describes how to equip the server with your own custom voices
 alongside the OpenAI-compatible standard voices.
 
-> **Use only audio you have the right to use.** Provide your own recordings, or
-> samples you are licensed to use. Do **not** clone the voice of a real person
-> without their explicit consent, and do not use copyrighted recordings
-> (films, series, games, published performances) as reference material. No
-> third-party audio is shipped with this software; you supply the samples.
+## ⚖️ Consent and rights — read first
+
+You supply the reference samples; no third-party audio ships with this software.
+Use **only** one of:
+
+1. **Your own voice**, or
+2. a voice for which you have the **speaker's explicit consent**, or a sample
+   you are **licensed** to use.
+
+Do **not**:
+
+- clone the voice of a real person without their explicit consent;
+- use copyrighted recordings (films, series, games, songs, published
+  performances, or clips downloaded from third-party platforms) as reference
+  material — that is copyright infringement regardless of how you use the
+  result, and "personal use" is not a general exception;
+- produce or distribute audio that impersonates a real person.
+
+Voice is a personal attribute protected by law in many jurisdictions (e.g. the
+right to one's own voice/likeness, data-protection rules on biometric data, and
+US right-of-publicity / anti-impersonation statutes). You are responsible for
+the samples you provide and the audio you generate.
 
 ## 🛡️ Technical sample requirements (the "raw material")
 

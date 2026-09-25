@@ -14,7 +14,7 @@
 #
 # Package: uttera-tts-hotcold
 # Version: 2.4.2
-# Maintainer: Uttera, Hugo L. Espuny
+# Maintainer: Hugo L. Espuny
 # Description: High-performance TTS server with pluggable engines (Coqui,
 #              VoxCPM2, …), personality tuning, and GIL-bypass concurrency.
 #
